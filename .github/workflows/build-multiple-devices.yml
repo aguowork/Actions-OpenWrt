@@ -21,30 +21,13 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 作为构建环境
-
-    strategy:
-      fail-fast: false
-      matrix:
-        device:
-          - name: "AX6000"
-            config: "./config/21.02/immortalwrtARM/AX6000/AX6000-mtwifi-cfg.config"
-            diy_p1: "./diy/21.02/immortalwrtARM/AX6000/diy-part1.sh"
-            diy_p2: "./diy/21.02/immortalwrtARM/AX6000/diy-part2.sh"
-          - name: "WR30U"
-            config: "./config/21.02/immortalwrtARM/WR30U/WR30U-mtwifi-cfg.config"
-            diy_p1: "./diy/21.02/immortalwrtARM/WR30U/diy-part1.sh"
-            diy_p2: "./diy/21.02/immortalwrtARM/WR30U/diy-part2.sh"
-          - name: "360T7"
-            config: "./config/21.02/immortalwrtARM/360T7/360T7-mtwifi-cfg.config"
-            diy_p1: "./diy/21.02/immortalwrtARM/360T7/diy-part1.sh"
-            diy_p2: "./diy/21.02/immortalwrtARM/360T7/diy-part2.sh"
+    runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout  # 检出代码
+    - name: Checkout
       uses: actions/checkout@main
 
-    - name: Initialization environment  # 初始化编译环境
+    - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -58,100 +41,134 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: Clone source code  # 克隆源码
+    - name: Clone source code
       working-directory: /workdir
       run: |
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds  # 加载自定义 feeds
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x ${{ matrix.device.diy_p1 }}
-        cd openwrt
-        $GITHUB_WORKSPACE/${{ matrix.device.diy_p1 }}
-
-    - name: Update feeds  # 更新 feeds
-      run: cd openwrt && ./scripts/feeds update -a
-
-    - name: Install feeds  # 安装 feeds
-      run: cd openwrt && ./scripts/feeds install -a
-
-    - name: Load custom configuration  # 加载自定义配置
-      run: |
-        [ -e files/21.02 ] && mkdir -p openwrt/files && mv files/21.02/* openwrt/files
-        [ -e ${{ matrix.device.config }} ] && mv ${{ matrix.device.config }} openwrt/.config
-        chmod +x ${{ matrix.device.diy_p2 }}
-        cd openwrt
-        $GITHUB_WORKSPACE/${{ matrix.device.diy_p2 }}
-
-    - name: Download package  # 下载软件包
-      id: package
+    - name: Update and Install feeds
       run: |
         cd openwrt
-        make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-    - name: Compile the firmware  # 编译固件
-      id: compile
+    # 添加缓存支持
+    - name: Cache downloads
+      uses: actions/cache@v3
+      with:
+        path: openwrt/dl
+        key: ${{ runner.os }}-openwrt-dl-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-dl-
+
+    - name: Cache ccache
+      uses: actions/cache@v3
+      with:
+        path: /workdir/.ccache
+        key: ${{ runner.os }}-ccache-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-
+
+    # 设置 ccache
+    - name: Setup ccache
       run: |
+        mkdir -p /workdir/.ccache
         cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "CONFIG_CCACHE=y" >> .config
+        export CCACHE_DIR=/workdir/.ccache
+        ccache -M 10G
+        ccache -o compression=true
+        ccache -o compression_level=9
+
+    # 为每个设备编译固件
+    - name: Build firmware for all devices
+      run: |
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        
+        devices=("AX6000" "WR30U" "360T7")
+        for device in "${devices[@]}"; do
+          echo "::group::Building $device"
+          echo "Building for $device..."
+          
+          # 复制设备特定的配置和文件
+          [ -e files/21.02 ] && mkdir -p openwrt/files && cp -rf files/21.02/* openwrt/files/
+          cp "./config/21.02/immortalwrtARM/$device/$device-mtwifi-cfg.config" openwrt/.config
+          
+          # 执行设备特定的自定义脚本
+          chmod +x "./diy/21.02/immortalwrtARM/$device/diy-part1.sh"
+          chmod +x "./diy/21.02/immortalwrtARM/$device/diy-part2.sh"
+          cd openwrt
+          $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/$device/diy-part1.sh
+          $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/$device/diy-part2.sh
+          
+          # 编译固件
+          make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+          
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 V=s
+          
+          # 整理固件文件
+          mkdir -p /workdir/firmware/$device
+          cp -r bin/targets/*/* /workdir/firmware/$device/
+          rm -rf /workdir/firmware/$device/packages
+          
+          # 清理编译目录，但保留下载的软件包和ccache
+          rm -rf build_dir tmp
+          cd $GITHUB_WORKSPACE
+          echo "::endgroup::"
+        done
 
-    - name: Check space usage  # 检查空间使用情况
-      if: (!cancelled())
+    # 检查磁盘使用情况
+    - name: Check space usage
+      if: always()
       run: df -hT
 
-    - name: Upload bin directory  # 上传 bin 目录
+    # 上传所有设备的固件
+    - name: Upload firmware
       uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin_${{ matrix.device.name }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    - name: Organize files  # 整理文件
-      id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-      run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload firmware directory  # 上传固件目录
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware_${{ matrix.device.name }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
+        name: OpenWrt_firmware_all_devices${{ env.FILE_DATE }}
+        path: /workdir/firmware
 
-    - name: Generate release tag  # 生成发布标签
-      id: tag
+    # 为每个设备创建 Release
+    - name: Create releases
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device.name }}" >> $GITHUB_OUTPUT
-        touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
+        devices=("AX6000" "WR30U" "360T7")
+        for device in "${devices[@]}"; do
+          release_tag="$(date +"%Y.%m.%d-%H%M-2102")-$device"
+          
+          # 创建 release 文件
+          echo "### $device 固件发布" > release.txt
+          echo "编译时间: $(date '+%Y-%m-%d %H:%M:%S')" >> release.txt
+          echo "源码版本: $REPO_BRANCH" >> release.txt
+          
+          # 使用 GitHub API 创建 release
+          gh release create "$release_tag" \
+            --title "$device OpenWrt Build $release_tag" \
+            --notes-file release.txt \
+            /workdir/firmware/$device/*
+        done
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Upload firmware to release  # 上传固件到 Release
-      uses: ncipollo/release-action@v1
-      if: steps.tag.outputs.status == 'success' && !cancelled()
-      with:
-        artifacts: "${{ env.FIRMWARE }}/*"
-        token: ${{ secrets.GITHUB_TOKEN }}
-        tag: ${{ steps.tag.outputs.release_tag }}
-        bodyFile: "release.txt"
-        allowUpdates: true
-        replacesArtifacts: true
+    # 发送编译完成通知
+    - name: Send Push Notification
+      if: always()
+      run: |
+        status="${{ job.status }}"
+        devices=("AX6000" "WR30U" "360T7")
+        message="OpenWrt Build Status: $status%0A"
+        for device in "${devices[@]}"; do
+          message+="$device: $status%0A"
+        done
+        curl -X GET "https://wxpusher.zjiecode.com/api/send/message/?appToken=AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6&content=$message&uid=UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"
 
     - name: Delete workflow runs  # 删除旧的工作流运行记录
       uses: Mattraks/delete-workflow-runs@main
@@ -167,7 +184,3 @@ jobs:
         delete_tags: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Send Push Notification  # 发送编译完成通知
-      run: |
-        curl -X GET 'https://wxpusher.zjiecode.com/api/send/message/?appToken=AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6&content=AguoWork%27s%20${{ matrix.device.name }}%20Build%20Completed&uid=UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k' 
