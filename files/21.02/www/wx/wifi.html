@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>系统管理</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛜</text></svg>">
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js" defer></script>
+</head>
+<body>
+    <!-- 密码输入容器 -->
+    <div class="container" id="loginContainer">
+        <h2 id="loginTitle">密码验证</h2>
+        <div id="passwordPrompt"></div>
+        <div class="password-inputs">
+            <input type="password" id="password" placeholder="请输入密码">
+            <input type="password" id="confirmPassword" placeholder="请再次输入密码" class="hidden">
+        </div>
+        <input type="button" value="确认" id="confirmButton">
+        <div class="password-hint">首次使用请设置密码(至少8位)</div>
+    </div>
+
+    <!-- 主界面容器 -->
+    <div class="main-container hidden" id="mainContainer">
+        <!-- 导航栏 -->
+        <nav class="nav-bar">
+            <div class="nav-item active" data-target="statusContainer">
+                <i class="nav-icon">📶</i>
+                <span>连接状态</span>
+            </div>
+            <div class="nav-item" data-target="wirelessContainer">
+                <i class="nav-icon">⚙️</i>
+                <span>无线设置</span>
+            </div>
+            <div class="nav-item" data-target="configContainer">
+                <i class="nav-icon">📡</i>
+                <span>连接热点</span>
+            </div>
+            <div class="nav-item" data-target="manageContainer">
+                <i class="nav-icon">📋</i>
+                <span>热点管理</span>
+            </div>
+            <div class="nav-item" data-target="autoSwitchPage">
+                <i class="nav-icon">🔄</i>
+                <span>智能切换</span>
+            </div>
+        </nav>
+
+        <!-- WiFi状态容器 -->
+        <div class="content-container active" id="statusContainer">
+            <div class="current-info">
+                <h2>Connection Status</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>🆔名称：</label>
+                        <span id="currentSSID"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>🔒密码：</label>
+                        <span id="currentKEY" class="password-field" onclick="togglePassword(this)"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>📶频段：</label>
+                        <span id="currentBand"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>🔗接口：</label>
+                        <span id="currentInterface"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>✌️状态：</label>
+                        <span id="currentBridgeStatus"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>🌐网络：</label>
+                        <span id="currentnetworkstatus"></span>
+                    </div>
+                </div>
+                <div class="button-group system-controls">
+                    <button onclick="showChangePasswordDialog()" class="system-button">
+                        <i class="nav-icon">🔑</i>管理密码
+                    </button>
+                    <button onclick="confirmUpdate()" class="system-button warning">
+                        <i class="nav-icon">🔄</i>更新系统
+                    </button>
+                    <button onclick="confirmReboot()" class="system-button warning">
+                        <i class="nav-icon">🔄</i>重启系统
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 切换连接热点容器 -->
+        <div class="content-container" id="configContainer">
+            <h2>Connect wifi</h2>
+            <div class="input-group">
+                <label>已知热点</label>
+                <button type="button" class="wifi-select-button" onclick="showWiFiSelectDialog()">
+                    选择已知热点 <span class="nav-icon">📡</span>
+                </button>
+            </div>
+            <div class="input-group">
+                <label for="wifiNameInput">WiFi名称</label>
+                <input type="text" id="wifiNameInput" placeholder="输入WiFi名称">
+            </div>
+            <div class="input-group">
+                <label for="encryption">安全性</label>
+                <select id="encryption">
+                    <option value="psk2">WPA2-PSK (强安全性)</option>
+                    <option value="sae">WPA3-SAE (强安全性)</option>
+                    <option value="psk">WPA-PSK (弱安全性)</option>
+                    <option value="owe">OWE (开放网络)</option>
+                    <option value="none" selected>无加密 (开放网络)</option>
+                </select>
+            </div>
+            <div class="input-group" id="passwordContainer">
+                <label for="wifiPwd">WiFi密码</label>
+                <input type="text" id="wifiPwd">
+            </div>
+            <div class="input-group">
+                <label for="wifiBand">WiFi频段</label>
+                <select id="wifiBand">
+                    <option value="" disabled selected>请选择频段</option>
+                    <option value="2G">2.4G</option>
+                    <option value="5G">5G</option>
+                </select>
+            </div>
+            <button id="saveButton">保存应用</button>
+        </div>
+
+        <!-- 热点管理界面 -->
+        <div class="content-container" id="manageContainer">
+            <div class="manage-header">
+                <h2>Access Points</h2>
+                <div class="wifi-list-controls">
+                    <div class="select-all" onclick="selectAllWiFi()">全选</div>
+                    <div class="select-inverse" onclick="selectInverseWiFi()">反选</div>
+                </div>
+            </div>
+            <div class="wifi-list" id="wifiList"></div>
+            <div class="button-group">
+                <button onclick="deleteSelectedWiFi()">删除选中</button>
+            </div>
+        </div>
+
+        <!-- 自动切换页面 -->
+        <div class="content-container" id="autoSwitchPage">
+            <h2>Smart Switch</h2>
+            <div class="button-group">
+                <button id="startAutoSwitchButton" onclick="startAutoSwitch()">开始切换</button>
+                <button id="autoSwitchTimerButton" onclick="autoSwitchTimer()">定时检测</button>
+            </div>
+            <div class="status-container">
+                <div id="autoSwitchStatus"></div>
+            </div>
+            <div class="auto-switch-tip" id="autoSwitchTip">
+                自动切换会断开WiFi连接，输出错误是正常的
+            </div>
+        </div>
+
+        <!-- 无线设置容器 -->
+        <div class="content-container" id="wirelessContainer">
+            <h2>Wireless Setup</h2>
+            
+            <!-- 2.4G WiFi设置 -->
+            <div class="wireless-section">
+                <h3>📶 2.4G WiFi设置</h3>
+                <div class="input-group">
+                    <label>状态</label>
+                    <select id="status2g" onchange="toggleWifiSettings('2g')">
+                        <option value="" disabled selected>请选择状态</option>
+                        <option value="0">开启</option>
+                        <option value="1">关闭</option>
+                    </select>
+                </div>
+                <div id="settings2g">
+                    <div class="input-group">
+                        <label>名称</label>
+                        <input type="text" id="ssid2g" placeholder="输入2.4G WiFi名称">
+                    </div>
+                    <div class="input-group">
+                        <label>密码</label>
+                        <input type="text" id="key2g" placeholder="输入2.4G WiFi密码">
+                    </div>
+                    <div class="input-group">
+                        <label>信道</label>
+                        <select id="channel2g">
+                            <option value="" disabled selected>请选择信道</option>
+                            <option value="auto">auto(推荐)</option>
+                            <option value="1">1 (2412 Mhz)</option>
+                            <option value="2">2 (2417 Mhz)</option>
+                            <option value="3">3 (2422 Mhz)</option>
+                            <option value="4">4 (2427 Mhz)</option>
+                            <option value="5">5 (2432 Mhz)</option>
+                            <option value="6">6 (2437 Mhz)</option>
+                            <option value="7">7 (2442 Mhz)</option>
+                            <option value="8">8 (2447 Mhz)</option>
+                            <option value="9">9 (2452 Mhz)</option>
+                            <option value="10">10 (2457 Mhz)</option>
+                            <option value="11">11 (2462 Mhz)</option>
+                            <option value="12">12 (2467 Mhz)</option>
+                            <option value="13">13 (2472 Mhz)</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>带宽</label>
+                        <select id="htmode2g">
+                            <option value="" disabled selected>请选择带宽</option>
+                            <option value="HE40">40 MHz</option>
+                            <option value="HE20">20 MHz</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>隐藏</label>
+                        <select id="hidden2g">
+                            <option value="" disabled selected>请选择是否隐藏</option>
+                            <option value="0">否</option>
+                            <option value="1">是</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5G WiFi设置 -->
+            <div class="wireless-section">
+                <h3>📶 5G WiFi设置</h3>
+                <div class="input-group">
+                    <label>状态</label>
+                    <select id="status5g" onchange="toggleWifiSettings('5g')">
+                        <option value="" disabled selected>请选择状态</option>
+                        <option value="0">开启</option>
+                        <option value="1">关闭</option>
+                    </select>
+                </div>
+                <div id="settings5g">
+                    <div class="input-group">
+                        <label>名称</label>
+                        <input type="text" id="ssid5g" placeholder="输入5G WiFi名称">
+                    </div>
+                    <div class="input-group">
+                        <label>密码</label>
+                        <input type="text" id="key5g" placeholder="输入5G WiFi密码">
+                    </div>
+                    <div class="input-group">
+                        <label>信道</label>
+                        <select id="channel5g">
+                            <option value="" disabled selected>请选择信道</option>
+                            <option value="auto">auto(推荐)</option>
+                            <option value="36">36 (5180 Mhz)</option>
+                            <option value="40">40 (5200 Mhz)</option>
+                            <option value="44">44 (5220 Mhz)</option>
+                            <option value="48">48 (5240 Mhz)</option>
+                            <option value="52">52 (5260 Mhz)</option>
+                            <option value="56">56 (5280 Mhz)</option>
+                            <option value="60">60 (5300 Mhz)</option>
+                            <option value="64">64 (5320 Mhz)</option>
+                            <option value="149">149 (5745 Mhz)</option>
+                            <option value="153">153 (5765 Mhz)</option>
+                            <option value="157">157 (5785 Mhz)</option>
+                            <option value="161">161 (5805 Mhz)</option>
+                            <option value="165">165 (5825 Mhz)</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>带宽</label>
+                        <select id="htmode5g">
+                            <option value="" disabled selected>请选择带宽</option>
+                            <option value="HE160">160 MHz</option>
+                            <option value="HE80">80 MHz</option>
+                            <option value="HE40">40 MHz</option>
+                            <option value="HE20">20 MHz</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>隐藏</label>
+                        <select id="hidden5g">
+                            <option value="" disabled selected>请选择是否隐藏</option>
+                            <option value="0">否</option>
+                            <option value="1">是</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <button id="saveWirelessButton" onclick="saveWirelessSettings()">保存应用</button>
+        </div>
+    </div>
+
+    <!-- 定时检测设置弹窗 -->
+    <div id="timerDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <h3>定时检测设置</h3>
+            <p class="dialog-desc">Crontab任务网动连接已知热点</p>
+            <div class="input-group">
+                <label for="timerInterval">检测间隔（分钟）</label>
+                <input type="number" id="timerInterval" min="0" max="59" placeholder="建议15-30">
+                <p class="dialog-tip">⚠️ 输入 0 则关闭定时检测</p>
+            </div>
+            <div class="dialog-buttons">
+                <button onclick="closeTimerDialog()">取消</button>
+                <button onclick="confirmTimer()" class="primary">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载动画容器 -->
+    <div id="loadingSpinner" class="loading-spinner hidden">
+        <div class="spinner"></div>
+        <div class="loading-text">处理中...</div>
+    </div>
+
+    <!-- 已知热点选择弹窗 -->
+    <div id="wifiSelectDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <h3>选择已知热点</h3>
+            <div class="wifi-select-list">
+                <div class="wifi-empty-state">
+                    <span class="nav-icon">📡</span>
+                    <p>暂无已知热点</p>
+                    <p class="wifi-empty-tip">请先 "手动输入" 添加数据</p>
+                </div>
+            </div>
+            <div class="dialog-buttons">
+                <button onclick="closeWiFiSelectDialog()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 热点管理删除选中确认弹窗 -->
+    <div id="deleteConfirmDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <div class="delete-header">
+                <span class="delete-icon">⚠️</span>
+                <h3>删除确认</h3>
+            </div>
+            <div class="confirm-content">
+                <div class="confirm-item">
+                    <label>选中数量：</label>
+                    <span id="deleteCount" class="highlight-text"></span>
+                </div>
+                <div class="confirm-item">
+                    <label>注意事项：</label>
+                    <span class="warning-text">此操作将不可恢复</span>
+                </div>
+            </div>
+            <div class="dialog-buttons delete-buttons">
+                <button onclick="closeDeleteConfirmDialog()">取消</button>
+                <button onclick="confirmDelete()" class="warning">删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 无线设置保存应用弹框 -->
+    <div id="wirelessSaveConfirmDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <div class="confirm-state">
+                <!-- 初始确认状态 -->
+                <div class="confirm-initial">
+                    <div class="progress-tips">
+                        <p>您确定要保存这些更改吗？</p>
+                        <p>保存后WIFI将会重启</p>
+                        <p>重启期间WIFI将会断开</p>
+                    </div>
+                    <div class="dialog-buttons">
+                        <button onclick="closeWirelessSaveConfirmDialog()">取消</button>
+                        <button onclick="startWirelessSave()" class="primary">确定</button>
+                    </div>
+                </div>
+                <!-- 保存进行中状态 -->
+                <div class="confirm-loading hidden">
+                    <div class="save-progress">
+                        <div class="progress-spinner"></div>
+                        <div class="progress-text">
+                            <p class="progress-status">正在保存设置...</p>
+                            <p class="progress-countdown">即将刷新设置状态 <span id="countdownTimer">60</span>秒</p>
+                        </div>
+                    </div>
+                    <div class="progress-tips">
+                        <p>WiFi正在重启中</p>
+                        <p>等待重新WIFI连接</p>
+                        <p>即将刷新设置状态</p>
+                        <p>更改WiFi名称/密码，请手动连接刷新</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 连接热点保存应用弹框 -->
+    <div id="configSaveConfirmDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <div class="confirm-state">
+                <!-- 初始确认状态 -->
+                <div class="confirm-initial">
+                    <div class="progress-tips">
+                        <p>您确定要保存这些配置吗？</p>
+                        <p>保存后WIFI将会重启</p>
+                        <p>重启期间WIFI将会断开</p>
+                    </div>
+                    <div class="dialog-buttons">
+                        <button onclick="closeConfigSaveConfirmDialog()">取消</button>
+                        <button onclick="startConfigSave()" class="primary">确定</button>
+                    </div>
+                </div>
+                <!-- 保存进行中状态 -->
+                <div class="confirm-loading hidden">
+                    <div class="save-progress">
+                        <div class="progress-spinner"></div>
+                        <div class="progress-text">
+                            <p class="progress-status">正在保存配置...</p>
+                            <p class="progress-countdown">即将刷新配置状态 <span id="configCountdownTimer">60</span>秒</p>
+                        </div>
+                    </div>
+                    <div class="progress-tips">
+                        <p>WiFi正在重启中</p>
+                        <p>等待重新WIFI连接</p>
+                        <p>刷新后查看连接状态是否成功</p>
+                        <p>失败检查密码/频段/安全类型是否正确</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改密码弹窗 -->
+    <div id="changePasswordDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <h3>修改密码</h3>
+            <div class="input-group">
+                <label for="oldPassword">当前密码</label>
+                <input type="password" id="oldPassword" placeholder="请输入当前密码">
+            </div>
+            <div class="input-group">
+                <label for="newPassword">新密码</label>
+                <input type="password" id="newPassword" placeholder="请输入新密码(至少8位)">
+            </div>
+            <div class="input-group">
+                <label for="confirmNewPassword">确认新密码</label>
+                <input type="password" id="confirmNewPassword" placeholder="请再次输入新密码">
+            </div>
+            <div class="dialog-buttons">
+                <button onclick="closeChangePasswordDialog()">取消</button>
+                <button onclick="submitChangePassword()" class="primary">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重启系统确认弹窗 -->
+    <div id="rebootConfirmDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <div class="confirm-state">
+                <!-- 初始确认状态 -->
+                <div class="confirm-initial">
+                    <div class="progress-tips">
+                        <p>您确定要重启系统吗？</p>
+                        <p>重启期间WIFI将会断开</p>
+                    </div>
+                    <div class="dialog-buttons">
+                        <button onclick="closeRebootConfirmDialog()">取消</button>
+                        <button onclick="startReboot()" class="primary">确定</button>
+                    </div>
+                </div>
+                <!-- 重启进行中状态 -->
+                <div class="confirm-loading hidden">
+                    <div class="save-progress">
+                        <div class="progress-spinner"></div>
+                        <div class="progress-text">
+                            <p class="progress-status">正在重启系统...</p>
+                            <p class="progress-countdown">即将重新连接 <span id="rebootCountdownTimer">80</span>秒</p>
+                        </div>
+                    </div>
+                    <div class="progress-tips">
+                        <p>系统正在重启中</p>
+                        <p>等待WIFI重新连接</p>
+                        <p>即将刷新连接状态</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 更新系统确认弹窗 -->
+    <div id="updateConfirmDialog" class="dialog hidden">
+        <div class="dialog-content">
+            <div class="confirm-state">
+                <!-- 初始确认状态 -->
+                <div class="confirm-initial">
+                    <div class="progress-tips">
+                        <p>您确定要更新系统吗？</p>
+                        <p>更新期间请勿断开电源</p>
+                        <p>更新完成后会自动刷新</p>
+                    </div>
+                    <div class="dialog-buttons">
+                        <button onclick="closeUpdateConfirmDialog()">取消</button>
+                        <button onclick="startUpdate()" class="primary">确定</button>
+                    </div>
+                </div>
+                <!-- 更新进行中状态 -->
+                <div class="confirm-loading hidden">
+                    <div class="save-progress">
+                        <div class="progress-spinner"></div>
+                        <div class="progress-text">
+                            <p class="progress-status">正在更新系统...</p>
+                            <p class="progress-countdown">请勿断开电源...</p>
+                        </div>
+                    </div>
+                    <div class="progress-tips update-output">
+                        <!-- 这里将显示后端输出信息 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
