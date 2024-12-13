@@ -17,8 +17,8 @@ env:
   UPLOAD_BIN_DIR: false  # 是否上传整个 bin 目录
   UPLOAD_FIRMWARE: true  # 是否上传固件
   UPLOAD_RELEASE: true   # 是否发布 Release
-  TZ: Asia/Shanghai     # 时区设置
   SEND_NOTIFICATION: true  # 控制是否发送通知
+  TZ: Asia/Shanghai     # 时区设置
 
 jobs:
   build:
@@ -197,22 +197,24 @@ jobs:
         HOURS=$((DURATION / 3600))
         MINUTES=$(( (DURATION % 3600) / 60 ))
         
-        # 创建共享的临时结果文件
-        TEMP_RESULTS="/tmp/build_results.txt"
+        # 使用设备特定的临时文件
+        TEMP_RESULTS="/tmp/build_results_${{ matrix.device.name }}.txt"
         
-        # 将当前设备的结果追加到临时文件
+        # 将当前设备的结果写入对应的临时文件
         if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
           RELEASE_TAG="${{ steps.tag.outputs.release_tag }}"
           DL_LINK="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-          echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}" >> $TEMP_RESULTS
+          echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}" > $TEMP_RESULTS
         else
-          echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-" >> $TEMP_RESULTS
+          echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-" > $TEMP_RESULTS
         fi
         
-        # 输出结果
-        echo "results<<EOF" >> $GITHUB_OUTPUT
-        cat $TEMP_RESULTS >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        # 合并所有设备的结果
+        {
+          echo "results<<EOF"
+          cat /tmp/build_results_*.txt 2>/dev/null || true
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
         
         echo "build_duration=${HOURS}h${MINUTES}m" >> $GITHUB_OUTPUT
 
