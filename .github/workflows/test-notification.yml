@@ -17,12 +17,12 @@ jobs:
           echo "start_time=2024-01-20 14:30:00" >> $GITHUB_OUTPUT
           echo "build_duration=2h15m" >> $GITHUB_OUTPUT
           
-          # 模拟三个设备的成功编译结果
+          # 模拟两个成功一个失败的编译结果
           cat << EOF >> $GITHUB_OUTPUT
           results<<EOF_MARKER
           AX6000|success|1月20日 15:30|https://github.com/${{ github.repository }}/releases/tag/2024.01.20-1430-2102-AX6000
           WR30U|success|1月20日 16:45|https://github.com/${{ github.repository }}/releases/tag/2024.01.20-1430-2102-WR30U
-          360T7|success|1月20日 16:45|https://github.com/${{ github.repository }}/releases/tag/2024.01.20-1430-2102-360T7
+          360T7|failed|1月20日 16:20|-
           EOF_MARKER
           EOF
 
@@ -44,7 +44,7 @@ jobs:
           
           # 编译环境信息
           NOTIFICATION="${NOTIFICATION}<div style='background-color:#f8f9fa;padding:15px;border-radius:4px;margin-bottom:20px;'>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环���信息：</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信息：</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;margin-top:5px;'>• 运行环境: Ubuntu 22.04</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码分支: ${REPO_BRANCH}</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码仓库: <a href='${REPO_URL}' style='color:#409eff;text-decoration:none;'>immortalwrt-mt798x</a></div>"

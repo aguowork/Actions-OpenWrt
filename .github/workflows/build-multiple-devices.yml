@@ -26,6 +26,7 @@ jobs:
       build_results: ${{ steps.collect_results.outputs.results }}
       build_duration: ${{ steps.collect_results.outputs.build_duration }}
       start_time: ${{ steps.record_time.outputs.start_time }}
+      repo_branch: ${{ env.REPO_BRANCH }}
 
     strategy:
       fail-fast: false
@@ -200,11 +201,11 @@ jobs:
         {
           echo "results<<EOF"
           if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
-            RELEASE_TAG=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device.name }}
+            RELEASE_TAG="${{ steps.tag.outputs.release_tag }}"
             DL_LINK="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-            echo "${{ matrix.device.name }}:success:${BUILD_TIME}:${DL_LINK}"
+            echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}"
           else
-            echo "${{ matrix.device.name }}:failed:${BUILD_TIME}:-"
+            echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-"
           fi
           echo "EOF"
         } >> $GITHUB_OUTPUT
@@ -244,27 +245,31 @@ jobs:
           NOTIFICATION="${NOTIFICATION}</div>"
           
           # 编译结果
-          echo "${{ needs.build.outputs.build_results }}" | while IFS=':' read -r device status time link; do
+          RESULTS=""
+          while IFS='|' read -r device status time link; do
             if [ "$status" = "success" ]; then
               # 成功项
-              NOTIFICATION="${NOTIFICATION}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
-              NOTIFICATION="${NOTIFICATION}<div style='color:#67c23a;font-size:16px;font-weight:bold;'>✅ ${device}</div>"
-              NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 编译完成于: ${time}</div>"
+              RESULTS="${RESULTS}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
+              RESULTS="${RESULTS}<div style='color:#67c23a;font-size:16px;font-weight:bold;'>✅ ${device}</div>"
+              RESULTS="${RESULTS}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 编译完成于: ${time}</div>"
               if [ "${link}" != "-" ]; then
-                NOTIFICATION="${NOTIFICATION}<div style='margin:8px 0;display:flex;gap:10px;'>"
-                NOTIFICATION="${NOTIFICATION}<a href='${link}' style='color:#409eff;text-decoration:none;font-size:13px;'>📥 下载固件</a>"
-                NOTIFICATION="${NOTIFICATION}<copy style='color:#409eff;cursor:pointer;font-size:13px;' data-clipboard-text='${link}'>[复制链接]</copy>"
-                NOTIFICATION="${NOTIFICATION}</div>"
+                RESULTS="${RESULTS}<div style='margin:8px 0;display:flex;gap:10px;'>"
+                RESULTS="${RESULTS}<a href='${link}' style='color:#409eff;text-decoration:none;font-size:13px;'>📥 下载固件</a>"
+                RESULTS="${RESULTS}<copy style='color:#409eff;cursor:pointer;font-size:13px;' data-clipboard-text='${link}'>[复制链接]</copy>"
+                RESULTS="${RESULTS}</div>"
               fi
-              NOTIFICATION="${NOTIFICATION}</div>"
+              RESULTS="${RESULTS}</div>"
             else
               # 失败项
-              NOTIFICATION="${NOTIFICATION}<div style='background-color:#fef0f0;border-left:4px solid #f56c6c;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
-              NOTIFICATION="${NOTIFICATION}<div style='color:#f56c6c;font-size:16px;font-weight:bold;'>❌ ${device}</div>"
-              NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 失败时间: ${time}</div>"
-              NOTIFICATION="${NOTIFICATION}</div>"
+              RESULTS="${RESULTS}<div style='background-color:#fef0f0;border-left:4px solid #f56c6c;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
+              RESULTS="${RESULTS}<div style='color:#f56c6c;font-size:16px;font-weight:bold;'>❌ ${device}</div>"
+              RESULTS="${RESULTS}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 失败时间: ${time}</div>"
+              RESULTS="${RESULTS}</div>"
             fi
-          done
+          done <<< "${{ needs.build.outputs.build_results }}"
+          
+          # 将编译结果添加到通知内容中
+          NOTIFICATION="${NOTIFICATION}${RESULTS}"
           
           # 总结信息
           SUCCESS_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | grep -c "success")
