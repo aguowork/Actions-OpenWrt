@@ -21,7 +21,11 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 作为构建环境
+    runs-on: ubuntu-22.04
+
+    # 添加输出变量用于收集编译结果
+    outputs:
+      build_results: ${{ steps.collect_results.outputs.results }}
 
     strategy:
       fail-fast: false
@@ -100,13 +104,17 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile the firmware  # 编译固件
+    - name: Compile the firmware
       id: compile
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
+        if [ $? -eq 0 ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "status=failed" >> $GITHUB_OUTPUT
+        fi
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -173,6 +181,44 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Send Push Notification  # 发送编译完成通知
+    # 收集编译结果
+    - name: Collect build results
+      id: collect_results
       run: |
-        curl -X GET 'https://wxpusher.zjiecode.com/api/send/message/?appToken=AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6&content=AguoWork%27s%20Workflow%20Completed&uid=UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k'
+        if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
+          BUILD_TIME=$(date '+%H时%M分')
+          echo "${{ matrix.device.name }}:success:${BUILD_TIME}" >> build_results.txt
+        else
+          BUILD_TIME=$(date '+%H时%M分')
+          echo "${{ matrix.device.name }}:failed:${BUILD_TIME}" >> build_results.txt
+        fi
+        echo "results=$(cat build_results.txt)" >> $GITHUB_OUTPUT
+
+  # 添加新的通知任务
+  notify:
+    needs: build
+    runs-on: ubuntu-22.04
+    if: always()
+    steps:
+      - name: Send summary notification
+        run: |
+          # 处理编译结果并生成通知内容
+          NOTIFICATION="OpenWrt固件编译工作流运行结束\n\n"
+          echo "${{ needs.build.outputs.build_results }}" | tr ' ' '\n' | while IFS=':' read -r device status time; do
+            if [ "$status" = "success" ]; then
+              NOTIFICATION="${NOTIFICATION}✅ ${device} 编译成功 (完成时间: ${time})\n"
+            else
+              NOTIFICATION="${NOTIFICATION}❌ ${device} 编译失败 (失败时间: ${time})\n"
+            fi
+          done
+          
+          # 添加总结信息
+          SUCCESS_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | tr ' ' '\n' | grep -c "success")
+          TOTAL_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | tr ' ' '\n' | wc -l)
+          NOTIFICATION="${NOTIFICATION}\n📊 总结: 共${TOTAL_COUNT}个固件，${SUCCESS_COUNT}个成功，$((TOTAL_COUNT-SUCCESS_COUNT))个失败"
+          
+          # 对通知内容进行 URL 编码
+          ENCODED_NOTIFICATION=$(echo -n "$NOTIFICATION" | jq -sRr @uri)
+          
+          # 发送通知
+          curl -X GET "https://wxpusher.zjiecode.com/api/send/message/?appToken=AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6&content=${ENCODED_NOTIFICATION}&uid=UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"
