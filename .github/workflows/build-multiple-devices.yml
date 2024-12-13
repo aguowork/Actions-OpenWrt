@@ -2,7 +2,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # OpenWrt 多设备固件自动编译脚本
 
-name: Build Multiple Devices OpenWrt
+name: OpenWrt 多设备固件编译
 
 # 触发工作流程的事件
 on:
@@ -22,10 +22,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-
-    # 添加输出变量用于收集编译结果
     outputs:
       build_results: ${{ steps.collect_results.outputs.results }}
+      build_duration: ${{ steps.collect_results.outputs.build_duration }}
+      start_time: ${{ steps.record_time.outputs.start_time }}
 
     strategy:
       fail-fast: false
@@ -45,6 +45,12 @@ jobs:
             diy_p2: "./diy/21.02/immortalwrtARM/360T7/diy-part2.sh"
 
     steps:
+    - name: Record start time
+      id: record_time
+      run: |
+        echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+        echo "BUILD_START_TIMESTAMP=$(date +%s)" >> $GITHUB_ENV
+
     - name: Checkout  # 检出代码
       uses: actions/checkout@main
 
@@ -184,41 +190,116 @@ jobs:
     # 收集编译结果
     - name: Collect build results
       id: collect_results
+      if: always()
       run: |
-        if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
-          BUILD_TIME=$(date '+%H时%M分')
-          echo "${{ matrix.device.name }}:success:${BUILD_TIME}" >> build_results.txt
-        else
-          BUILD_TIME=$(date '+%H时%M分')
-          echo "${{ matrix.device.name }}:failed:${BUILD_TIME}" >> build_results.txt
-        fi
-        echo "results=$(cat build_results.txt)" >> $GITHUB_OUTPUT
+        BUILD_TIME=$(date '+%m月%d日 %H:%M')
+        END_TIMESTAMP=$(date +%s)
+        DURATION=$((END_TIMESTAMP - ${{ env.BUILD_START_TIMESTAMP }}))
+        HOURS=$((DURATION / 3600))
+        MINUTES=$(( (DURATION % 3600) / 60 ))
+        
+        {
+          echo "results<<EOF"
+          if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
+            RELEASE_TAG=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device.name }}
+            DL_LINK="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+            echo "${{ matrix.device.name }}:success:${BUILD_TIME}:${DL_LINK}"
+          else
+            echo "${{ matrix.device.name }}:failed:${BUILD_TIME}:-"
+          fi
+          echo "EOF"
+        } >> $GITHUB_OUTPUT
+        
+        echo "build_duration=${HOURS}h${MINUTES}m" >> $GITHUB_OUTPUT
 
   # 添加新的通知任务
   notify:
     needs: build
     runs-on: ubuntu-22.04
     if: always()
+    env:
+      REPO_BRANCH: ${{ needs.build.outputs.repo_branch }}
     steps:
       - name: Send summary notification
         run: |
           # 处理编译结果并生成通知内容
-          NOTIFICATION="OpenWrt固件编译工作流运行结束\n\n"
-          echo "${{ needs.build.outputs.build_results }}" | tr ' ' '\n' | while IFS=':' read -r device status time; do
+          NOTIFICATION="<div style='font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;'>"
+          
+          # 转义特殊字符
+          escape_json() {
+            echo "$1" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed 's/\n/\\n/g' | sed 's/\t/\\t/g'
+          }
+          
+          # 标题部分
+          NOTIFICATION="${NOTIFICATION}<div style='text-align:center;background-color:#409eff;color:white;padding:20px;border-radius:8px;margin-bottom:20px;'>"
+          NOTIFICATION="${NOTIFICATION}<h2 style='margin:0;'>🔄 OpenWrt 固件编译通知</h2>"
+          NOTIFICATION="${NOTIFICATION}<div style='margin-top:10px;font-size:14px;'>开始时间: ${{ needs.build.outputs.start_time }}</div>"
+          NOTIFICATION="${NOTIFICATION}</div>"
+          
+          # 编译环境信息
+          NOTIFICATION="${NOTIFICATION}<div style='background-color:#f8f9fa;padding:15px;border-radius:4px;margin-bottom:20px;'>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信息：</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;margin-top:5px;'>• 运行环境: Ubuntu 22.04</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码分支: ${{ env.REPO_BRANCH }}</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码仓库: <a href='${{ env.REPO_URL }}' style='color:#409eff;text-decoration:none;'>immortalwrt-mt798x</a></div>"
+          NOTIFICATION="${NOTIFICATION}</div>"
+          
+          # 编译结果
+          echo "${{ needs.build.outputs.build_results }}" | while IFS=':' read -r device status time link; do
             if [ "$status" = "success" ]; then
-              NOTIFICATION="${NOTIFICATION}✅ ${device} 编译成功 (完成时间: ${time})\n"
+              # 成功项
+              NOTIFICATION="${NOTIFICATION}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
+              NOTIFICATION="${NOTIFICATION}<div style='color:#67c23a;font-size:16px;font-weight:bold;'>✅ ${device}</div>"
+              NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 编译完成于: ${time}</div>"
+              if [ "${link}" != "-" ]; then
+                NOTIFICATION="${NOTIFICATION}<div style='margin:8px 0;display:flex;gap:10px;'>"
+                NOTIFICATION="${NOTIFICATION}<a href='${link}' style='color:#409eff;text-decoration:none;font-size:13px;'>📥 下载固件</a>"
+                NOTIFICATION="${NOTIFICATION}<copy style='color:#409eff;cursor:pointer;font-size:13px;' data-clipboard-text='${link}'>[复制链接]</copy>"
+                NOTIFICATION="${NOTIFICATION}</div>"
+              fi
+              NOTIFICATION="${NOTIFICATION}</div>"
             else
-              NOTIFICATION="${NOTIFICATION}❌ ${device} 编译失败 (失败时间: ${time})\n"
+              # 失败项
+              NOTIFICATION="${NOTIFICATION}<div style='background-color:#fef0f0;border-left:4px solid #f56c6c;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
+              NOTIFICATION="${NOTIFICATION}<div style='color:#f56c6c;font-size:16px;font-weight:bold;'>❌ ${device}</div>"
+              NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 失败时间: ${time}</div>"
+              NOTIFICATION="${NOTIFICATION}</div>"
             fi
           done
           
-          # 添加总结信息
-          SUCCESS_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | tr ' ' '\n' | grep -c "success")
-          TOTAL_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | tr ' ' '\n' | wc -l)
-          NOTIFICATION="${NOTIFICATION}\n📊 总结: 共${TOTAL_COUNT}个固件，${SUCCESS_COUNT}个成功，$((TOTAL_COUNT-SUCCESS_COUNT))个失败"
+          # 总结信息
+          SUCCESS_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | grep -c "success")
+          TOTAL_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | wc -l)
           
-          # 对通知内容进行 URL 编码
-          ENCODED_NOTIFICATION=$(echo -n "$NOTIFICATION" | jq -sRr @uri)
+          NOTIFICATION="${NOTIFICATION}<div style='background-color:#f4f4f5;border-left:4px solid #909399;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
+          NOTIFICATION="${NOTIFICATION}<div style='font-weight:bold;color:#303133;'>📊 编译结果统计</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='display:flex;justify-content:space-between;margin-top:10px;'>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;'>• 共 ${TOTAL_COUNT} 个固件</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#67c23a;font-size:13px;'>• ${SUCCESS_COUNT} 个成功</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#f56c6c;font-size:13px;'>• $((TOTAL_COUNT-SUCCESS_COUNT)) 个失败</div>"
+          NOTIFICATION="${NOTIFICATION}</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin-top:10px;'>⌛ 总耗时: ${{ needs.build.outputs.build_duration }}</div>"
+          NOTIFICATION="${NOTIFICATION}</div>"
+          
+          NOTIFICATION="${NOTIFICATION}</div>"
+          
+          # 使用转义函数处理通知内容
+          ESCAPED_NOTIFICATION=$(escape_json "${NOTIFICATION}")
+          
+          # 构建完整的 JSON 数据
+          JSON_DATA=$(cat <<EOF
+          {
+            "appToken": "AT_ryo91ZPH31fKLonPBFN5UwlxTkPl7Vf0",
+            "content": "${ESCAPED_NOTIFICATION}",
+            "summary": "OpenWrt 固件编译完成",
+            "contentType": 2,
+            "uids": ["UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"]
+          }
+          EOF
+          )
           
           # 发送通知
-          curl -X GET "https://wxpusher.zjiecode.com/api/send/message/?appToken=AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6&content=${ENCODED_NOTIFICATION}&uid=UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d "${JSON_DATA}" \
+            https://wxpusher.zjiecode.com/api/send/message
