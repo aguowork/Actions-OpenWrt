@@ -1,0 +1,108 @@
+name: Unified OpenWrt Build for Multiple Devices
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
+  REPO_BRANCH: openwrt-21.02
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: AX6000
+            config: ./config/21.02/immortalwrtARM/AX6000/AX6000-mtwifi-cfg.config
+            diy_part1: ./diy/21.02/immortalwrtARM/AX6000/diy-part1.sh
+            diy_part2: ./diy/21.02/immortalwrtARM/AX6000/diy-part2.sh
+          - device: WR30U
+            config: ./config/21.02/immortalwrtARM/WR30U/WR30U-mtwifi-cfg.config
+            diy_part1: ./diy/21.02/immortalwrtARM/WR30U/diy-part1.sh
+            diy_part2: ./diy/21.02/immortalwrtARM/WR30U/diy-part2.sh
+          - device: 360T7
+            config: ./config/21.02/immortalwrtARM/360T7/360T7-mtwifi-cfg.config
+            diy_part1: ./diy/21.02/immortalwrtARM/360T7/diy-part1.sh
+            diy_part2: ./diy/21.02/immortalwrtARM/360T7/diy-part2.sh
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Initialization environment
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Clone source code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Load custom feeds and configuration for ${{ matrix.device }}
+      run: |
+        [ -e ${{ matrix.config }} ] && mv ${{ matrix.config }} openwrt/.config
+        chmod +x ${{ matrix.diy_part1 }}
+        chmod +x ${{ matrix.diy_part2 }}
+        cd openwrt
+        $GITHUB_WORKSPACE/${{ matrix.diy_part1 }}
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+        $GITHUB_WORKSPACE/${{ matrix.diy_part2 }}
+
+    - name: Compile the firmware for ${{ matrix.device }}
+      run: |
+        cd openwrt
+        make defconfig
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware for ${{ matrix.device }}
+      uses: actions/upload-artifact@main
+      with:
+        name: ${{ matrix.device }}_firmware
+        path: openwrt/bin
+
+    - name: Send Push Notification
+      if: always()
+      run: |
+        # 构建通知消息
+        NOTIFICATION="🔄 OpenWrt 固件编译通知\n开始时间: $(date +"%Y-%m-%d %H:%M:%S")\n\n📋 编译环境信息：\n• 运行环境: ${RUNNER_OS}\n• 源码分支: ${REPO_BRANCH}\n• 源码仓库: ${REPO_URL}\n\n"
+        # 添加设备编译结果
+        for device in AX6000 WR30U 360T7; do
+          if [ -f "${device}_status.txt" ]; then
+            STATUS=$(cat "${device}_status.txt")
+            NOTIFICATION+="${STATUS}\n"
+          fi
+        done
+        # 使用转义函数处理通知内容
+        ESCAPED_NOTIFICATION=$(escape_json "${NOTIFICATION}")
+        # 构建完整的 JSON 数据
+        JSON_DATA=$(cat <<EOF
+        {
+            "appToken": "AT_ryo91ZPH31fKLonPBFN5UwlxTkPl7Vf0",
+            "content": "${ESCAPED_NOTIFICATION}",
+            "summary": "OpenWrt 固件编译完成",
+            "contentType": 2,
+            "uids": ["UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"]
+        }
+        EOF
+        )
+        # 发送通知
+        curl -X POST \
+        -H "Content-Type: application/json" \
+        -d "${JSON_DATA}" \
+        https://wxpusher.zjiecode.com/api/send/message
