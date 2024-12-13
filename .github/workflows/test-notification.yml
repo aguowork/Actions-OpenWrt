@@ -17,16 +17,16 @@ jobs:
           {
             echo "results<<EOF"
             # 模拟 AX6000 编译成功
-            echo "AX6000:success:$(date -d '30 minutes ago' '+%H时%M分'):https://github.com/${{ github.repository }}/releases/tag/$(date +%Y.%m.%d-%H%M-2102)-AX6000"
+            echo "AX6000:success:$(date -d '1 hour 30 minutes ago' '+%m月%d日 %H:%M'):https://github.com/${{ github.repository }}/releases/tag/$(date +%Y.%m.%d-%H%M-2102)-AX6000"
             # 模拟 WR30U 编译失败
-            echo "WR30U:failed:$(date -d '20 minutes ago' '+%H时%M分'):-"
+            echo "WR30U:failed:$(date -d '2 hours 20 minutes ago' '+%m月%d日 %H:%M'):-"
             # 模拟 360T7 编译成功
-            echo "360T7:success:$(date '+%H时%M分'):https://github.com/${{ github.repository }}/releases/tag/$(date +%Y.%m.%d-%H%M-2102)-360T7"
+            echo "360T7:success:$(date -d '2 hours 45 minutes ago' '+%m月%d日 %H:%M'):https://github.com/${{ github.repository }}/releases/tag/$(date +%Y.%m.%d-%H%M-2102)-360T7"
             echo "EOF"
           } >> $GITHUB_OUTPUT
           
           # 模拟总耗时
-          echo "build_duration=1h30m" >> $GITHUB_OUTPUT
+          echo "build_duration=2h15m" >> $GITHUB_OUTPUT
 
       - name: Send test notification
         run: |
@@ -40,7 +40,7 @@ jobs:
           
           # 标题部分
           NOTIFICATION="${NOTIFICATION}<div style='text-align:center;background-color:#409eff;color:white;padding:20px;border-radius:8px;margin-bottom:20px;'>"
-          NOTIFICATION="${NOTIFICATION}<h2 style='margin:0;'>🔄 OpenWrt固件编译工作流运行结束</h2>"
+          NOTIFICATION="${NOTIFICATION}<h2 style='margin:0;'>🔄 OpenWrt固件编译通知</h2>"
           NOTIFICATION="${NOTIFICATION}<div style='margin-top:10px;font-size:14px;'>开始时间: ${{ steps.test_data.outputs.start_time }}</div>"
           NOTIFICATION="${NOTIFICATION}</div>"
           
@@ -49,6 +49,8 @@ jobs:
           NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信息：</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;margin-top:5px;'>• 运行环境: Ubuntu 22.04</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码分支: openwrt-21.02</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 编译设备: AX6000、WR30U、360T7</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码仓库: immortalwrt-mt798x</div>"
           NOTIFICATION="${NOTIFICATION}</div>"
           
           # 编译结果
@@ -57,7 +59,7 @@ jobs:
               # 成功项
               NOTIFICATION="${NOTIFICATION}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
               NOTIFICATION="${NOTIFICATION}<div style='color:#67c23a;font-size:16px;font-weight:bold;'>✅ ${device}</div>"
-              NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 完成时间: ${time}</div>"
+              NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 编译完成于: ${time}</div>"
               if [ "${link}" != "-" ]; then
                 NOTIFICATION="${NOTIFICATION}<div style='margin:8px 0;display:flex;gap:10px;'>"
                 NOTIFICATION="${NOTIFICATION}<a href='${link}' style='color:#409eff;text-decoration:none;font-size:13px;'>📥 下载固件</a>"
