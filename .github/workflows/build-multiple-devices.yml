@@ -18,6 +18,7 @@ env:
   UPLOAD_FIRMWARE: true  # 是否上传固件
   UPLOAD_RELEASE: true   # 是否发布 Release
   TZ: Asia/Shanghai     # 时区设置
+  SEND_NOTIFICATION: true  # 控制是否发送通知
 
 jobs:
   build:
@@ -159,8 +160,6 @@ jobs:
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device.name }}" >> $GITHUB_OUTPUT
-        touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: 上传固件到 Release
@@ -170,7 +169,6 @@ jobs:
         artifacts: "${{ env.FIRMWARE }}/*"
         token: ${{ secrets.GITHUB_TOKEN }}
         tag: ${{ steps.tag.outputs.release_tag }}
-        bodyFile: "release.txt"
         allowUpdates: true
         replacesArtifacts: true
 
@@ -200,23 +198,21 @@ jobs:
         MINUTES=$(( (DURATION % 3600) / 60 ))
         
         # 创建共享的临时结果文件
-        TEMP_RESULTS="/tmp/build_results_${{ matrix.device.name }}.txt"
+        TEMP_RESULTS="/tmp/build_results.txt"
         
-        # 将当前设备的结果写入对应的临时文件
+        # 将当前设备的结果追加到临时文件
         if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
           RELEASE_TAG="${{ steps.tag.outputs.release_tag }}"
           DL_LINK="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-          echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}" > $TEMP_RESULTS
+          echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}" >> $TEMP_RESULTS
         else
-          echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-" > $TEMP_RESULTS
+          echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-" >> $TEMP_RESULTS
         fi
         
-        # 合并所有设备的结果
-        {
-          echo "results<<EOF"
-          cat /tmp/build_results_*.txt 2>/dev/null || true
-          echo "EOF"
-        } >> $GITHUB_OUTPUT
+        # 输出结果
+        echo "results<<EOF" >> $GITHUB_OUTPUT
+        cat $TEMP_RESULTS >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
         
         echo "build_duration=${HOURS}h${MINUTES}m" >> $GITHUB_OUTPUT
 
@@ -224,12 +220,17 @@ jobs:
   notify:
     needs: build
     runs-on: ubuntu-22.04
-    if: always()
-    env:
-      REPO_BRANCH: ${{ needs.build.outputs.repo_branch }}
+    if: always() && env.SEND_NOTIFICATION == 'true'
     steps:
       - name: Send summary notification
         run: |
+          # 处理所有设备的结果
+          echo "${{ needs.build.outputs.build_results }}" > $TEMP_FILE
+          
+          # 按设备名称排序结果
+          sort -t'|' -k1 $TEMP_FILE > $TEMP_FILE.sorted
+          mv $TEMP_FILE.sorted $TEMP_FILE
+          
           # 处理编译结果并生成通知内容
           NOTIFICATION="<div style='font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;'>"
           
@@ -322,5 +323,3 @@ jobs:
             -H "Content-Type: application/json" \
             -d "${JSON_DATA}" \
             https://wxpusher.zjiecode.com/api/send/message
-          
-          rm -f $TEMP_FILE  # 清理临时文件
