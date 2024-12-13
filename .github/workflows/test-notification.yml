@@ -16,13 +16,17 @@ jobs:
           # 模拟编译结果数据 - 使用特殊分隔符处理多行
           {
             echo "results<<EOF"
-            echo "AX6000:success:14时30分:https://github.com/your-repo/releases/tag/2024.01.20-1430-2102-AX6000"
-            echo "WR30U:success:15时45分:https://github.com/your-repo/releases/tag/2024.01.20-1545-2102-WR30U"
-            echo "360T7:failed:16时20分:-"
+            # 模拟 AX6000 编译成功
+            echo "AX6000:success:$(date -d '30 minutes ago' '+%H时%M分'):https://github.com/${{ github.repository }}/releases/tag/$(date +%Y.%m.%d-%H%M-2102)-AX6000"
+            # 模拟 WR30U 编译失败
+            echo "WR30U:failed:$(date -d '20 minutes ago' '+%H时%M分'):-"
+            # 模拟 360T7 编译成功
+            echo "360T7:success:$(date '+%H时%M分'):https://github.com/${{ github.repository }}/releases/tag/$(date +%Y.%m.%d-%H%M-2102)-360T7"
             echo "EOF"
           } >> $GITHUB_OUTPUT
           
-          echo "build_duration=1h50m" >> $GITHUB_OUTPUT
+          # 模拟总耗时
+          echo "build_duration=1h30m" >> $GITHUB_OUTPUT
 
       - name: Send test notification
         run: |
@@ -42,7 +46,7 @@ jobs:
           
           # 编译环境信息
           NOTIFICATION="${NOTIFICATION}<div style='background-color:#f8f9fa;padding:15px;border-radius:4px;margin-bottom:20px;'>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信��：</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信息：</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;margin-top:5px;'>• 运行环境: Ubuntu 22.04</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码分支: openwrt-21.02</div>"
           NOTIFICATION="${NOTIFICATION}</div>"
