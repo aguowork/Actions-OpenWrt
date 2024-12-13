@@ -97,8 +97,8 @@ jobs:
             "contentType": 2,
             "uids": ["UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"]
           }
-EOF
-          )
+                                                EOF
+                                                        )
           
           # 发送通知
           curl -X POST \
