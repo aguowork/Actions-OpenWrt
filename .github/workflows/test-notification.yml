@@ -13,14 +13,15 @@ jobs:
           # 模拟编译开始时间
           echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
           
-          # 模拟编译结果数据
-          cat > build_results.txt << EOF
-          AX6000:success:14时30分:https://github.com/your-repo/releases/tag/2024.01.20-1430-2102-AX6000
-          WR30U:success:15时45分:https://github.com/your-repo/releases/tag/2024.01.20-1545-2102-WR30U
-          360T7:failed:16时20分:-
-          EOF
+          # 模拟编译结果数据 - 使用特殊分隔符处理多行
+          {
+            echo "results<<EOF"
+            echo "AX6000:success:14时30分:https://github.com/your-repo/releases/tag/2024.01.20-1430-2102-AX6000"
+            echo "WR30U:success:15时45分:https://github.com/your-repo/releases/tag/2024.01.20-1545-2102-WR30U"
+            echo "360T7:failed:16时20分:-"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
           
-          echo "results=$(cat build_results.txt)" >> $GITHUB_OUTPUT
           echo "build_duration=1h50m" >> $GITHUB_OUTPUT
 
       - name: Send test notification
@@ -41,13 +42,13 @@ jobs:
           
           # 编译环境信息
           NOTIFICATION="${NOTIFICATION}<div style='background-color:#f8f9fa;padding:15px;border-radius:4px;margin-bottom:20px;'>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信息：</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信��：</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;margin-top:5px;'>• 运行环境: Ubuntu 22.04</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码分支: openwrt-21.02</div>"
           NOTIFICATION="${NOTIFICATION}</div>"
           
           # 编译结果
-          echo "${{ steps.test_data.outputs.results }}" | tr ' ' '\n' | while IFS=':' read -r device status time link; do
+          echo "${{ steps.test_data.outputs.results }}" | while IFS=':' read -r device status time link; do
             if [ "$status" = "success" ]; then
               # 成功项
               NOTIFICATION="${NOTIFICATION}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
@@ -70,8 +71,8 @@ jobs:
           done
           
           # 总结信息
-          SUCCESS_COUNT=$(echo "${{ steps.test_data.outputs.results }}" | tr ' ' '\n' | grep -c "success")
-          TOTAL_COUNT=$(echo "${{ steps.test_data.outputs.results }}" | tr ' ' '\n' | wc -l)
+          SUCCESS_COUNT=$(echo "${{ steps.test_data.outputs.results }}" | grep -c "success")
+          TOTAL_COUNT=$(echo "${{ steps.test_data.outputs.results }}" | wc -l)
           
           NOTIFICATION="${NOTIFICATION}<div style='background-color:#f4f4f5;border-left:4px solid #909399;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
           NOTIFICATION="${NOTIFICATION}<div style='font-weight:bold;color:#303133;'>📊 编译结果统计</div>"
@@ -97,8 +98,8 @@ jobs:
             "contentType": 2,
             "uids": ["UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"]
           }
-                                                EOF
-                                                        )
+          EOF
+          )
           
           # 发送通知
           curl -X POST \
