@@ -1,0 +1,254 @@
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# MT798x 系列路由器固件自动编译脚本
+
+name: MT798x OpenWrt Build
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
+  REPO_BRANCH: openwrt-21.02
+  FEEDS_CONF: feeds.conf.default
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Initialize Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+
+    - name: Clone Source Code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Update & Install Feeds
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+    - name: Build AX6000
+      id: build_ax6000
+      run: |
+        cd openwrt
+        cp $GITHUB_WORKSPACE/config/21.02/immortalwrtARM/AX6000/AX6000-mtwifi-cfg.config .config
+        chmod +x $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/AX6000/diy-part*.sh
+        $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/AX6000/diy-part1.sh
+        $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/AX6000/diy-part2.sh
+        make defconfig
+        make download -j8
+        echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')" > ax6000_build.txt
+        if make -j$(nproc) || make -j1 V=s; then
+          echo "编译完成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> ax6000_build.txt
+          echo "status=success" >> ax6000_build.txt
+          mkdir -p /workdir/ax6000_firmware
+          cp -r bin/targets/*/* /workdir/ax6000_firmware/
+        else
+          echo "编译失败时间: $(date '+%Y-%m-%d %H:%M:%S')" >> ax6000_build.txt
+          echo "status=failed" >> ax6000_build.txt
+        fi
+        make clean
+
+    - name: Build WR30U
+      id: build_wr30u
+      run: |
+        cd openwrt
+        cp $GITHUB_WORKSPACE/config/21.02/immortalwrtARM/WR30U/WR30U-mtwifi-cfg.config .config
+        chmod +x $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/WR30U/diy-part*.sh
+        $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/WR30U/diy-part1.sh
+        $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/WR30U/diy-part2.sh
+        make defconfig
+        make download -j8
+        echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')" > wr30u_build.txt
+        if make -j$(nproc) || make -j1 V=s; then
+          echo "编译完成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> wr30u_build.txt
+          echo "status=success" >> wr30u_build.txt
+          mkdir -p /workdir/wr30u_firmware
+          cp -r bin/targets/*/* /workdir/wr30u_firmware/
+        else
+          echo "编译失败时间: $(date '+%Y-%m-%d %H:%M:%S')" >> wr30u_build.txt
+          echo "status=failed" >> wr30u_build.txt
+        fi
+        make clean
+
+    - name: Build 360T7
+      id: build_360t7
+      run: |
+        cd openwrt
+        cp $GITHUB_WORKSPACE/config/21.02/immortalwrtARM/360T7/360T7-mtwifi-cfg.config .config
+        chmod +x $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/360T7/diy-part*.sh
+        $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/360T7/diy-part1.sh
+        $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/360T7/diy-part2.sh
+        make defconfig
+        make download -j8
+        echo "开始时间: $(date '+%Y-%m-%d %H:%M:%S')" > 360t7_build.txt
+        if make -j$(nproc) || make -j1 V=s; then
+          echo "编译完成时间: $(date '+%Y-%m-%d %H:%M:%S')" >> 360t7_build.txt
+          echo "status=success" >> 360t7_build.txt
+          mkdir -p /workdir/360t7_firmware
+          cp -r bin/targets/*/* /workdir/360t7_firmware/
+        else
+          echo "编译失败时间: $(date '+%Y-%m-%d %H:%M:%S')" >> 360t7_build.txt
+          echo "status=failed" >> 360t7_build.txt
+        fi
+
+    - name: Generate Release Tag
+      id: tag
+      if: env.UPLOAD_RELEASE == 'true'
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2102")" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload Firmware to Release
+      uses: ncipollo/release-action@v1
+      if: steps.tag.outputs.status == 'success'
+      with:
+        artifacts: "/workdir/*_firmware/*"
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ steps.tag.outputs.release_tag }}
+        bodyFile: "release.txt"
+        allowUpdates: true
+        replacesArtifacts: true
+
+    - name: Delete Old Workflow Runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+
+    - name: Remove Old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true'
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Send Build Notification
+      run: |
+        # 获取编译结果
+        AX6000_STATUS=$(grep "status=" ax6000_build.txt | cut -d'=' -f2)
+        WR30U_STATUS=$(grep "status=" wr30u_build.txt | cut -d'=' -f2)
+        T7_STATUS=$(grep "status=" 360t7_build.txt | cut -d'=' -f2)
+        
+        # 计算成功失败数
+        SUCCESS_COUNT=0
+        FAILED_COUNT=0
+        for status in $AX6000_STATUS $WR30U_STATUS $T7_STATUS; do
+          if [ "$status" = "success" ]; then
+            ((SUCCESS_COUNT++))
+          else
+            ((FAILED_COUNT++))
+          fi
+        done
+        
+        # 计算总耗时
+        END_TIME=$(date '+%s')
+        START_TIME=$(date -d "$START_TIME" '+%s')
+        DURATION=$((END_TIME - START_TIME))
+        HOURS=$((DURATION / 3600))
+        MINUTES=$(((DURATION % 3600) / 60))
+        
+        # 构建通知内容
+        NOTIFICATION="<div style='font-family: Arial, sans-serif;'>
+        <h2>🔄 OpenWrt 固件编译通知</h2>
+        <p>开始时间: $START_TIME</p>
+        
+        <h3>📋 编译环境信息：</h3>
+        <ul>
+          <li>运行环境: Ubuntu 22.04</li>
+          <li>源码分支: openwrt-21.02</li>
+          <li>源码仓库: immortalwrt-mt798x</li>
+        </ul>
+        "
+        
+        # AX6000 结果
+        if [ "$AX6000_STATUS" = "success" ]; then
+          NOTIFICATION+="<div style='background-color: #e6ffe6; padding: 10px; margin: 10px 0; border-radius: 5px;'>
+          ✅ AX6000<br>
+          ⏱️ $(grep '编译完成时间' ax6000_build.txt | cut -d':' -f2-)<br>
+          📥 下载固件 <copy data-clipboard-text='${{ steps.tag.outputs.release_tag }}/AX6000'>复制链接</copy>
+          </div>"
+        else
+          NOTIFICATION+="<div style='background-color: #ffe6e6; padding: 10px; margin: 10px 0; border-radius: 5px;'>
+          ❌ AX6000<br>
+          ⏱️ $(grep '编译失败时间' ax6000_build.txt | cut -d':' -f2-)
+          </div>"
+        fi
+        
+        # WR30U 结果
+        if [ "$WR30U_STATUS" = "success" ]; then
+          NOTIFICATION+="<div style='background-color: #e6ffe6; padding: 10px; margin: 10px 0; border-radius: 5px;'>
+          ✅ WR30U<br>
+          ⏱️ $(grep '编译完成时间' wr30u_build.txt | cut -d':' -f2-)<br>
+          📥 下载固件 <copy data-clipboard-text='${{ steps.tag.outputs.release_tag }}/WR30U'>复制链接</copy>
+          </div>"
+        else
+          NOTIFICATION+="<div style='background-color: #ffe6e6; padding: 10px; margin: 10px 0; border-radius: 5px;'>
+          ❌ WR30U<br>
+          ⏱️ $(grep '编译失败时间' wr30u_build.txt | cut -d':' -f2-)
+          </div>"
+        fi
+        
+        # 360T7 结果
+        if [ "$T7_STATUS" = "success" ]; then
+          NOTIFICATION+="<div style='background-color: #e6ffe6; padding: 10px; margin: 10px 0; border-radius: 5px;'>
+          ✅ 360T7<br>
+          ⏱️ $(grep '编译完成时间' 360t7_build.txt | cut -d':' -f2-)<br>
+          📥 下载固件 <copy data-clipboard-text='${{ steps.tag.outputs.release_tag }}/360T7'>复制链接</copy>
+          </div>"
+        else
+          NOTIFICATION+="<div style='background-color: #ffe6e6; padding: 10px; margin: 10px 0; border-radius: 5px;'>
+          ❌ 360T7<br>
+          ⏱️ $(grep '编译失败时间' 360t7_build.txt | cut -d':' -f2-)
+          </div>"
+        fi
+        
+        NOTIFICATION+="<h3>📊 编译结果统计</h3>
+        <ul>
+          <li>共 3 个固件</li>
+          <li>$SUCCESS_COUNT 个成功</li>
+          <li>$FAILED_COUNT 个失败</li>
+          <li>⌛ 总耗时: ${HOURS}h${MINUTES}m</li>
+        </ul>
+        </div>"
+        
+        # 发送通知
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"appToken\": \"AT_ryo91ZPH31fKLonPBFN5UwlxTkPl7Vf0\",
+            \"content\": \"$NOTIFICATION\",
+            \"summary\": \"OpenWrt 固件编译完成\",
+            \"contentType\": 2,
+            \"uids\": [\"UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k\"]
+          }" \
+          https://wxpusher.zjiecode.com/api/send/message
