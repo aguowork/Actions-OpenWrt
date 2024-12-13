@@ -27,6 +27,7 @@ jobs:
       build_duration: ${{ steps.collect_results.outputs.build_duration }}
       start_time: ${{ steps.record_time.outputs.start_time }}
       repo_branch: ${{ env.REPO_BRANCH }}
+      matrix_result: ${{ toJSON(matrix) }}
 
     strategy:
       fail-fast: false
@@ -198,15 +199,22 @@ jobs:
         HOURS=$((DURATION / 3600))
         MINUTES=$(( (DURATION % 3600) / 60 ))
         
+        # 创建共享的临时结果文件
+        TEMP_RESULTS="/tmp/build_results_${{ matrix.device.name }}.txt"
+        
+        # 将当前设备的结果写入对应的临时文件
+        if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
+          RELEASE_TAG="${{ steps.tag.outputs.release_tag }}"
+          DL_LINK="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
+          echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}" > $TEMP_RESULTS
+        else
+          echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-" > $TEMP_RESULTS
+        fi
+        
+        # 合并所有设备的结果
         {
           echo "results<<EOF"
-          if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
-            RELEASE_TAG="${{ steps.tag.outputs.release_tag }}"
-            DL_LINK="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-            echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}"
-          else
-            echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-"
-          fi
+          cat /tmp/build_results_*.txt 2>/dev/null || true
           echo "EOF"
         } >> $GITHUB_OUTPUT
         
@@ -246,41 +254,48 @@ jobs:
           
           # 编译结果
           RESULTS=""
+          TEMP_FILE=$(mktemp)
+          echo "${{ needs.build.outputs.build_results }}" > $TEMP_FILE
+          
           while IFS='|' read -r device status time link; do
-            if [ "$status" = "success" ]; then
-              # 成功项
-              RESULTS="${RESULTS}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
-              RESULTS="${RESULTS}<div style='color:#67c23a;font-size:16px;font-weight:bold;'>✅ ${device}</div>"
-              RESULTS="${RESULTS}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 编译完成于: ${time}</div>"
-              if [ "${link}" != "-" ]; then
-                RESULTS="${RESULTS}<div style='margin:8px 0;display:flex;gap:10px;'>"
-                RESULTS="${RESULTS}<a href='${link}' style='color:#409eff;text-decoration:none;font-size:13px;'>📥 下载固件</a>"
-                RESULTS="${RESULTS}<copy style='color:#409eff;cursor:pointer;font-size:13px;' data-clipboard-text='${link}'>[复制链接]</copy>"
+            if [ -n "$device" ]; then  # 确保行不为空
+              if [ "$status" = "success" ]; then
+                # 成功项
+                RESULTS="${RESULTS}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
+                RESULTS="${RESULTS}<div style='color:#67c23a;font-size:16px;font-weight:bold;'>✅ ${device}</div>"
+                RESULTS="${RESULTS}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 编译完成于: ${time}</div>"
+                if [ "${link}" != "-" ]; then
+                  RESULTS="${RESULTS}<div style='margin:8px 0;display:flex;gap:10px;'>"
+                  RESULTS="${RESULTS}<a href='${link}' style='color:#409eff;text-decoration:none;font-size:13px;'>📥 下载固件</a>"
+                  RESULTS="${RESULTS}<copy style='color:#409eff;cursor:pointer;font-size:13px;' data-clipboard-text='${link}'>[复制链接]</copy>"
+                  RESULTS="${RESULTS}</div>"
+                fi
+                RESULTS="${RESULTS}</div>"
+              else
+                # 失败项
+                RESULTS="${RESULTS}<div style='background-color:#fef0f0;border-left:4px solid #f56c6c;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
+                RESULTS="${RESULTS}<div style='color:#f56c6c;font-size:16px;font-weight:bold;'>❌ ${device}</div>"
+                RESULTS="${RESULTS}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 失败时间: ${time}</div>"
                 RESULTS="${RESULTS}</div>"
               fi
-              RESULTS="${RESULTS}</div>"
-            else
-              # 失败项
-              RESULTS="${RESULTS}<div style='background-color:#fef0f0;border-left:4px solid #f56c6c;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
-              RESULTS="${RESULTS}<div style='color:#f56c6c;font-size:16px;font-weight:bold;'>❌ ${device}</div>"
-              RESULTS="${RESULTS}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 失败时间: ${time}</div>"
-              RESULTS="${RESULTS}</div>"
             fi
-          done <<< "${{ needs.build.outputs.build_results }}"
+          done < $TEMP_FILE
+          
+          # 统计信息
+          SUCCESS_COUNT=$(grep -c "success" $TEMP_FILE)
+          TOTAL_COUNT=$(grep -cv "^$" $TEMP_FILE)  # 排除空行
+          FAILED_COUNT=$((TOTAL_COUNT - SUCCESS_COUNT))
           
           # 将编译结果添加到通知内容中
           NOTIFICATION="${NOTIFICATION}${RESULTS}"
           
           # 总结信息
-          SUCCESS_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | grep -c "success")
-          TOTAL_COUNT=$(echo "${{ needs.build.outputs.build_results }}" | wc -l)
-          
           NOTIFICATION="${NOTIFICATION}<div style='background-color:#f4f4f5;border-left:4px solid #909399;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
           NOTIFICATION="${NOTIFICATION}<div style='font-weight:bold;color:#303133;'>📊 编译结果统计</div>"
           NOTIFICATION="${NOTIFICATION}<div style='display:flex;justify-content:space-between;margin-top:10px;'>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;'>• 共 ${TOTAL_COUNT} 个固件</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#67c23a;font-size:13px;'>• ${SUCCESS_COUNT} 个成功</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#f56c6c;font-size:13px;'>• $((TOTAL_COUNT-SUCCESS_COUNT)) 个失败</div>"
+          NOTIFICATION="${NOTIFICATION}<div style='color:#f56c6c;font-size:13px;'>• ${FAILED_COUNT} 个失败</div>"
           NOTIFICATION="${NOTIFICATION}</div>"
           NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin-top:10px;'>⌛ 总耗时: ${{ needs.build.outputs.build_duration }}</div>"
           NOTIFICATION="${NOTIFICATION}</div>"
@@ -307,3 +322,5 @@ jobs:
             -H "Content-Type: application/json" \
             -d "${JSON_DATA}" \
             https://wxpusher.zjiecode.com/api/send/message
+          
+          rm -f $TEMP_FILE  # 清理临时文件
