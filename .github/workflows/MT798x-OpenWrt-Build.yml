@@ -188,13 +188,18 @@ jobs:
         allowUpdates: true
         replacesArtifacts: true
 
-    - name: Get firmware download url  # 获取固件下载地址
+    - name: Get firmware download url  # 获取固件下载地址、系统版本号
       id: firmware
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         cd ${{ env.FIRMWARE }}
+        # 获取升级固件下载地址（Release）
         FIRMWARE_PATH=$(ls *-squashfs-sysupgrade.bin)
         echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> $GITHUB_OUTPUT
+        # 获取完整固件下载地址（Release Tag页面）
+        echo "all_firmware_url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.release_tag }}" >> $GITHUB_OUTPUT
+        # 获取系统版本信息
+        echo "system_info=$(lsb_release -ds | tr -d '"')" >> $GITHUB_OUTPUT
 
     - name: Delete workflow runs  # 删除旧的工作流运行记录
       uses: Mattraks/delete-workflow-runs@main
@@ -229,7 +234,11 @@ jobs:
            [ "${{ steps.tag.outputs.status }}" = "success" ]; then
           BUILD_STATUS="✅"
           STATUS_MSG="编译完成于"
-          FIRMWARE_LINE="<li>📥 升级固件：<a href='javascript:void(0);' onclick='navigator.clipboard.writeText(\"${{ steps.firmware.outputs.download_url }}\")'>复制下载链接</a></li>"
+          # 构建复制链接的HTML
+          COPY_SCRIPT="onclick='navigator.clipboard.writeText(this.dataset.link).then(() => {this.textContent=\"复制成功\";setTimeout(() => {this.textContent=\"复制下载链接\";}, 1000);})'"
+          
+          FIRMWARE_LINE="<li>📥 升级固件：<a href='javascript:void(0);' data-link=\"${{ steps.firmware.outputs.download_url }}\" ${COPY_SCRIPT}>复制下载链接</a></li>"
+          FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：<a href='javascript:void(0);' data-link=\"${{ steps.firmware.outputs.all_firmware_url }}\" ${COPY_SCRIPT}>复制下载链接</a></li>"
         else
           BUILD_STATUS="❌"
           STATUS_MSG="编译失败于"
@@ -251,7 +260,7 @@ jobs:
         
         <h3>📋 编译环境信息：</h3>
         <ul>
-          <li>运行环境: ${{ runner.os }}-${{ runner.arch }}</li>
+          <li>运行环境: ${{ steps.firmware.outputs.system_info }}</li>
           <li>源码分支: ${REPO_BRANCH}</li>
           <li>源码仓库: $(basename ${REPO_URL} .git)</li>
           <li>开始时间: ${START_TIME}</li>
