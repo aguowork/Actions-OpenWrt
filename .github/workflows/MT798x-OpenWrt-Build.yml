@@ -183,6 +183,14 @@ jobs:
         allowUpdates: true
         replacesArtifacts: true
 
+    - name: Get firmware download url  # 获取固件下载地址
+      id: firmware
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        cd ${{ env.FIRMWARE }}
+        FIRMWARE_PATH=$(ls *-squashfs-sysupgrade.bin)
+        echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> $GITHUB_OUTPUT
+
     - name: Delete workflow runs  # 删除旧的工作流运行记录
       uses: Mattraks/delete-workflow-runs@main
       with:
@@ -230,7 +238,7 @@ jobs:
         <h3>✅ ${{ matrix.device }}</h3>
         <ul>
           <li>⏱️ 编译完成于: $(date '+%m月%d日 %H:%M')</li>
-          <li>📥 下载固件: <a href='${{ steps.tag.outputs.release_tag }}'>点击下载</a></li>
+          <li>📥 下载固件：<a href='javascript:void(0);' onclick='navigator.clipboard.writeText(\"${{ steps.firmware.outputs.download_url }}\")'>点击复制链接</a></li>
           <li>⌛ 总耗时: ${HOURS}h${MINUTES}m</li>
         </ul>"
         
