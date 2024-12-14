@@ -16,16 +16,21 @@ jobs:
     - name: 初始化测试环境
       run: |
         echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-        # 模拟三个设备的成功编译结果
+        # 修改 BUILD_RESULTS 的设置方式
+        BUILD_RESULTS="AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://github.com/${{ github.repository }}/releases/download/latest/AX6000-firmware.bin
+WR30U|success|2024-01-01 10:30:00|2024-01-01 11:00:00|https://github.com/${{ github.repository }}/releases/download/latest/WR30U-firmware.bin
+360T7|success|2024-01-01 11:00:00|2024-01-01 11:30:00|https://github.com/${{ github.repository }}/releases/download/latest/360T7-firmware.bin"
         echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
-        echo "AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://github.com/${{ github.repository }}/releases/download/latest/AX6000-firmware.bin" >> $GITHUB_ENV
-        echo "WR30U|success|2024-01-01 10:30:00|2024-01-01 11:00:00|https://github.com/${{ github.repository }}/releases/download/latest/WR30U-firmware.bin" >> $GITHUB_ENV
-        echo "360T7|success|2024-01-01 11:00:00|2024-01-01 11:30:00|https://github.com/${{ github.repository }}/releases/download/latest/360T7-firmware.bin" >> $GITHUB_ENV
+        echo "$BUILD_RESULTS" >> $GITHUB_ENV
         echo "EOF" >> $GITHUB_ENV
 
     - name: 发送编译通知
       if: always()
       run: |
+        # 添加调试信息
+        echo "DEBUG: BUILD_RESULTS 内容:"
+        echo "$BUILD_RESULTS"
+        
         # 更详细的调试信息
         echo "DEBUG: 检查 secrets 是否存在"
         echo "WXPUSHER_TOKEN exists: ${{ secrets.WXPUSHER_TOKEN != '' }}"
@@ -35,7 +40,6 @@ jobs:
         echo "WXPUSHER_TOKEN 长度: ${#WXPUSHER_TOKEN}"
         echo "WXPUSHER_UIDS 长度: ${#WXPUSHER_UIDS}"
         
-        # 使用环境变量而不是直接使用 secrets
         if [ -z "${WXPUSHER_TOKEN}" ] || [ -z "${WXPUSHER_UIDS}" ]; then
           echo "警告：WXPusher 配置未设置，跳过通知发送"
           exit 0
@@ -43,6 +47,7 @@ jobs:
         
         echo "DEBUG: 配置验证通过，开始准备通知内容"
         
+        # 准备通知内容
         notification="🔄 OpenWrt 固件编译通知\n"
         notification+="开始时间: ${{ env.START_TIME }}\n\n"
         notification+="📋 编译环境信息：\n"
@@ -53,6 +58,7 @@ jobs:
         fail_count=0
 
         while IFS='|' read -r device status start_time end_time link; do
+          echo "DEBUG: 处理设备: $device"
           if [ "$status" == "success" ]; then
             notification+="✅ ${device}\n"
             notification+="⏱️ 编译完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
@@ -65,7 +71,7 @@ jobs:
             notification+="⏱️ 编译失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
             ((fail_count++))
           fi
-        done <<< "${{ env.BUILD_RESULTS }}"
+        done <<< "${BUILD_RESULTS}"
         
         total=$((success_count + fail_count))
         
