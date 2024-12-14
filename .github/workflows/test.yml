@@ -26,7 +26,11 @@ jobs:
     - name: 发送编译通知
       if: always()
       run: |
-        # 添加调试信息
+        # 更详细的调试信息
+        echo "DEBUG: 检查 secrets 是否存在"
+        echo "WXPUSHER_TOKEN exists: ${{ secrets.WXPUSHER_TOKEN != '' }}"
+        echo "WXPUSHER_UIDS exists: ${{ secrets.WXPUSHER_UIDS != '' }}"
+        
         echo "DEBUG: 打印环境变量"
         echo "WXPUSHER_TOKEN 长度: ${#WXPUSHER_TOKEN}"
         echo "WXPUSHER_UIDS 长度: ${#WXPUSHER_UIDS}"
