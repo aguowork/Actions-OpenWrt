@@ -1,0 +1,156 @@
+name: OpenWrt 固件自动编译
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: '选择设备'
+        required: false
+        type: choice
+        options:
+          - all
+          - AX6000
+          - WR30U
+          - 360T7
+
+env:
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
+  REPO_BRANCH: openwrt-21.02
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+  WORKDIR: /workdir
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: 检查输入
+        id: set-matrix
+        run: |
+          if [ "${{ github.event.inputs.device }}" = "all" ] || [ -z "${{ github.event.inputs.device }}" ]; then
+            echo "matrix={\"device\":[\"AX6000\",\"WR30U\",\"360T7\"]}" >> $GITHUB_OUTPUT
+          else
+            echo "matrix={\"device\":[\"${{ github.event.inputs.device }}\"]}" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix: ${{fromJson(needs.prepare.outputs.matrix)}}
+
+    steps:
+      - name: 初始化环境
+        run: |
+          sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/P3TERX/openwrt-build-env/master/build-env-on-ubuntu-focal)
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ"
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 缓存依赖
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ env.WORKDIR }}/openwrt/staging_dir
+            ${{ env.WORKDIR }}/openwrt/build_dir
+            ${{ env.WORKDIR }}/openwrt/dl
+          key: openwrt-${{ matrix.device }}-${{ hashFiles('config/**/*.config') }}
+          restore-keys: |
+            openwrt-${{ matrix.device }}-
+
+      - name: 克隆源码
+        run: |
+          mkdir -p $WORKDIR
+          cd $WORKDIR
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          ln -sf $WORKDIR/openwrt $GITHUB_WORKSPACE/openwrt
+
+      - name: 更新 feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 加载配置
+        run: |
+          [ -e files ] && cp -r files openwrt/files
+          cp config/21.02/immortalwrtARM/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config openwrt/.config
+          cd openwrt
+          bash $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/${{ matrix.device }}/diy-part2.sh
+
+      - name: 下载依赖
+        run: |
+          cd openwrt
+          make defconfig
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: 编译固件
+        id: compile
+        run: |
+          cd openwrt
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
+          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+          echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      - name: 整理文件
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          cd openwrt/bin/targets/*/*
+          rm -rf packages
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+
+      - name: 发布固件
+        uses: softprops/action-gh-release@v1
+        if: steps.compile.outputs.status == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ matrix.device }}_${{ env.FILE_DATE }}
+          files: ${{ env.FIRMWARE }}/*
+          generate_release_notes: true
+          body: |
+            🎉 OpenWrt 固件发布
+            
+            📱 设备: ${{ matrix.device }}
+            ⏰ 编译时间: ${{ env.FILE_DATE }}
+            🔗 源码: ${{ env.REPO_URL }}
+            🌿 分支: ${{ env.REPO_BRANCH }}
+
+      - name: 发送通知
+        if: always()
+        uses: wxpusher/wxpusher-action@main
+        with:
+          appToken: ${{ secrets.WXPUSHER_APPTOKEN }}
+          uids: ${{ secrets.WXPUSHER_UIDS }}
+          content: |
+            设备: ${{ matrix.device }}
+            状态: ${{ steps.compile.outputs.status == 'success' && '✅ 成功' || '❌ 失败' }}
+            时间: ${{ env.FILE_DATE }}
+            ${{ steps.compile.outputs.status == 'success' && format('下载: https://github.com/{0}/releases/tag/{1}_{2}', github.repository, matrix.device, env.FILE_DATE) || '' }}
+
+  cleanup:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 清理旧版本
+        uses: dev-drprasad/delete-older-releases@v0.2.1
+        with:
+          keep_latest: 3
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
