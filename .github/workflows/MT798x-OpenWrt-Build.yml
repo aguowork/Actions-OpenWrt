@@ -167,7 +167,7 @@ jobs:
 
     - name: 上传 bin 目录
       uses: actions/upload-artifact@main
-      # 判断是否上传 bin 目录，UPLOAD_BIN_DIR等于true时上传
+      # 判断是否上传 bin 目录���UPLOAD_BIN_DIR等于true时上传
       if: env.UPLOAD_BIN_DIR == 'true' && !cancelled()
       with:
         name: OpenWrt_bin_${{ github.event.inputs.device_selection }}_$(date +%Y%m%d_%H%M)
@@ -241,6 +241,7 @@ jobs:
           echo "⚠️ WXPusher配置未设置，跳过通知"
           exit 0
         fi
+        
         # 设置通知内容
         notification="# 🔄 OpenWrt固件编译通知\\n\\n"
         
@@ -249,21 +250,19 @@ jobs:
         fail_count=0
         
         # 解析JSON格式的编译结果
-        echo "${{ env.BUILD_RESULTS }}" | jq -c '.[]' | while read -r item; do
-          device=$(echo "$item" | jq -r '.device')
-          status=$(echo "$item" | jq -r '.status')
-          size=$(echo "$item" | jq -r '.size')
-          
+        while IFS= read -r device status size; do
           if [ "$status" = "success" ]; then
             ((success_count++))
-            # 使用实际的发布标签构建下载链接
-            firmware_link="https://github.com/${{ github.repository }}/releases/download/${{ env.release_tag }}/${device}-firmware.bin"
+            # 获取升级固件的实际文件名
+            firmware_name=$(find openwrt/bin/targets/ -iname "*${device}*squashfs-sysupgrade.bin" -printf "%f\n")
+            # 使用实际的固件文件名构建下载链接
+            firmware_link="https://github.com/${{ github.repository }}/releases/download/${{ env.release_tag }}/${firmware_name}"
             notification+="✅ [${device}](copy:${firmware_link}) (${size})\\n"
           else
             ((fail_count++))
             notification+="❌ ${device}\\n"
           fi
-        done
+        done < <(echo "${{ env.BUILD_RESULTS }}" | jq -r '.[] | "\(.device) \(.status) \(.size)"')
         
         # 计算总耗时
         duration=$(( $(date +%s) - $(date -d "${{ env.START_TIME }}" +%s) ))
