@@ -50,13 +50,23 @@ jobs:
             diy_p1_sh: ./diy/21.02/immortalwrtARM/360T7/diy-part1.sh
             diy_p2_sh: ./diy/21.02/immortalwrtARM/360T7/diy-part2.sh
     
-    if: ${{ github.event.inputs.device_selection == '全部' || github.event.inputs.device_selection == matrix.device }}
-
     steps:
+    - name: Check if should build
+      id: check
+      run: |
+        if [[ "${{ github.event.inputs.device_selection }}" == "全部" || \
+              "${{ github.event.inputs.device_selection }}" == "${{ matrix.device }}" ]]; then
+          echo "should_build=true" >> $GITHUB_OUTPUT
+        else
+          echo "should_build=false" >> $GITHUB_OUTPUT
+        fi
+
     - name: Checkout  # 检出代码
+      if: steps.check.outputs.should_build == 'true'
       uses: actions/checkout@main
 
     - name: Initialization environment  # 初始化编译环境
+      if: steps.check.outputs.should_build == 'true'
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
