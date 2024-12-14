@@ -27,8 +27,6 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
-  WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
 
 jobs:
   build:
@@ -140,6 +138,12 @@ jobs:
     - name: 发送编译通知
       if: always()
       run: |
+        # 检查必要的变量是否存在
+        if [ -z "${{ secrets.WXPUSHER_TOKEN }}" ] || [ -z "${{ secrets.WXPUSHER_UIDS }}" ]; then
+          echo "警告：WXPusher 配置未设置，跳过通知发送"
+          exit 0
+        fi
+        
         # 生成通知内容
         notification="🔄 OpenWrt 固件编译通知\n"
         notification+="开始时间: ${{ env.START_TIME }}\n\n"
@@ -183,11 +187,11 @@ jobs:
         curl -X POST \
           -H "Content-Type: application/json" \
           -d "{
-            \"appToken\": \"${{ env.WXPUSHER_TOKEN }}\",
+            \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
             \"content\": \"$notification\",
             \"summary\": \"OpenWrt 固件编译完成\",
             \"contentType\": 2,
-            \"uids\": [\"${{ env.WXPUSHER_UIDS }}\"]
+            \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
           }" \
           https://wxpusher.zjiecode.com/api/send/message
 
