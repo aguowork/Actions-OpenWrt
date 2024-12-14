@@ -1,56 +1,36 @@
-# OpenWrt 多设备固件自动编译脚本
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# MT798x 系列路由器固件自动编译脚本
 
-name: OpenWrt 多设备固件编译
+name: MT798x OpenWrt Build
 
-# 触发工作流程的事件
 on:
-  repository_dispatch:  # 允许通过 API 触发工作流程
-  workflow_dispatch:    # 允许手动触发工作流程
+  repository_dispatch:
+  workflow_dispatch:
+    inputs:
+      device_selection:
+        description: '选择要编译的设备'
+        required: true
+        type: choice
+        options: ${{ fromJson(vars.SUPPORTED_DEVICES) }}
+        default: 'all'
 
-# 环境变量设置
 env:
-  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git  # 源码仓库地址
-  REPO_BRANCH: openwrt-21.02  # 源码分支
-  FEEDS_CONF: feeds.conf.default  # feeds 配置文件
-  UPLOAD_BIN_DIR: false  # 是否上传整个 bin 目录
-  UPLOAD_FIRMWARE: true  # 是否上传固件
-  UPLOAD_RELEASE: true   # 是否发布 Release
-  TZ: Asia/Shanghai     # 时区设置
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
+  REPO_BRANCH: openwrt-21.02
+  FEEDS_CONF: feeds.conf.default
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+  WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
+  WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    outputs:
-      build_results: ${{ steps.collect_results.outputs.results }}
-      build_duration: ${{ steps.collect_results.outputs.build_duration }}
-      start_time: ${{ steps.record_time.outputs.start_time }}
-      repo_branch: ${{ env.REPO_BRANCH }}
-      matrix_result: ${{ toJSON(matrix) }}
-
-    strategy:
-      fail-fast: false
-      matrix:
-        device:
-          - name: "AX6000"
-            config: "./config/21.02/immortalwrtARM/AX6000/AX6000-mtwifi-cfg.config"
-            diy_p1: "./diy/21.02/immortalwrtARM/AX6000/diy-part1.sh"
-            diy_p2: "./diy/21.02/immortalwrtARM/AX6000/diy-part2.sh"
-          - name: "WR30U"
-            config: "./config/21.02/immortalwrtARM/WR30U/WR30U-mtwifi-cfg.config"
-            diy_p1: "./diy/21.02/immortalwrtARM/WR30U/diy-part1.sh"
-            diy_p2: "./diy/21.02/immortalwrtARM/WR30U/diy-part2.sh"
-          - name: "360T7"
-            config: "./config/21.02/immortalwrtARM/360T7/360T7-mtwifi-cfg.config"
-            diy_p1: "./diy/21.02/immortalwrtARM/360T7/diy-part1.sh"
-            diy_p2: "./diy/21.02/immortalwrtARM/360T7/diy-part2.sh"
 
     steps:
-    - name: Record start time
-      id: record_time
-      run: |
-        echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
-        echo "BUILD_START_TIMESTAMP=$(date +%s)" >> $GITHUB_ENV
-
     - name: 检出代码
       uses: actions/checkout@main
 
@@ -58,127 +38,153 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
+        # 清理系统空间
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
+        
+        # 更新包列表
         sudo -E apt-get -qq update
+        
+        # 安装编译所需的依赖包
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        
+        # 清理 apt 缓存
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
+        
+        # 设置时区
         sudo timedatectl set-timezone "$TZ"
+        
+        # 创建工作目录
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
+        
+        # 记录开始时间，并初始化 BUILD_RESULTS，作用是保存编译结果
+        echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+        echo "BUILD_RESULTS=" >> $GITHUB_ENV
 
-    - name: 克隆源代码
+    - name: 克隆源码
       working-directory: /workdir
       run: |
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: 加载自定义 feeds
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x ${{ matrix.device.diy_p1 }}
-        cd openwrt
-        $GITHUB_WORKSPACE/${{ matrix.device.diy_p1 }}
-
-    - name: 更新 feeds
-      run: cd openwrt && ./scripts/feeds update -a
-
-    - name: 安装 feeds
-      run: cd openwrt && ./scripts/feeds install -a
-
-    - name: 加载自定义配置
-      run: |
-        [ -e files/21.02 ] && mkdir -p openwrt/files && mv files/21.02/* openwrt/files
-        [ -e ${{ matrix.device.config }} ] && mv ${{ matrix.device.config }} openwrt/.config
-        chmod +x ${{ matrix.device.diy_p2 }}
-        cd openwrt
-        $GITHUB_WORKSPACE/${{ matrix.device.diy_p2 }}
-
-    - name: 清理编译目录
+    - name: 更新并安装软件源
       run: |
         cd openwrt
-        make clean
-
-    - name: 下载软件包
-      id: package
-      run: |
-        cd openwrt
-        make defconfig
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
     - name: 编译固件
-      id: compile
+      id: build
       run: |
-        cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        if [ $? -eq 0 ]; then
-          echo "status=success" >> $GITHUB_OUTPUT
+        # 从仓库变量获取设备列表
+        if [ "${{ github.event.inputs.device_selection }}" = "all" ]; then
+          DEVICES=($(echo "${{ vars.SUPPORTED_DEVICES }}" | jq -r '.[]'))
         else
-          echo "status=failed" >> $GITHUB_OUTPUT
+          DEVICES=("${{ github.event.inputs.device_selection }}")
         fi
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        
+        results=""
+        
+        for device in "${DEVICES[@]}"; do
+          device_start_time=$(date '+%Y-%m-%d %H:%M:%S')
+          echo "开始编译 ${device} 固件..."
+          
+          # 设置设备特定的配置文件
+          CONFIG_FILE="./config/21.02/immortalwrtARM/${device}/${device}-mtwifi-cfg.config"
+          DIY_P1_SH="./diy/21.02/immortalwrtARM/${device}/diy-part1.sh"
+          DIY_P2_SH="./diy/21.02/immortalwrtARM/${device}/diy-part2.sh"
+          
+          # 加载配置
+          cd openwrt
+          [ -e $CONFIG_FILE ] && cp $CONFIG_FILE .config
+          [ -e $DIY_P1_SH ] && chmod +x $DIY_P1_SH && $GITHUB_WORKSPACE/$DIY_P1_SH
+          [ -e $DIY_P2_SH ] && chmod +x $DIY_P2_SH && $GITHUB_WORKSPACE/$DIY_P2_SH
+          
+          # 编译固件
+          make defconfig
+          make download -j8
+          make -j$(nproc) || make -j1 V=s
 
-    - name: 检查空间使用情况
-      if: (!cancelled())
-      run: df -hT
+          # 判断编译是否成功，成功则记录固件链接，失败则记录失败时间
+          if [ $? -eq 0 ]; then
+            status="success"
+            device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
+            firmware_link="https://github.com/${{ github.repository }}/releases/download/latest/${device}-firmware.bin"
+            results="${results}${device}|${status}|${device_start_time}|${device_end_time}|${firmware_link}\n"
+          else
+            status="failed"
+            device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
+            results="${results}${device}|${status}|${device_start_time}|${device_end_time}|\n"
+          fi
+          # 返回工作目录
+          cd $GITHUB_WORKSPACE
+        done
+        
+        # 保存编译结果
+        echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
+        # 将编译结果写入 GITHUB_ENV
+        echo -e "$results" >> $GITHUB_ENV
+        # 结束保存
+        echo "EOF" >> $GITHUB_ENV
 
-    - name: 上传 bin 目录
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin_${{ matrix.device.name }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    - name: 整理文件
-      id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+    - name: 发送编译通知
+      if: always()
       run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
+        # 生成通知内容
+        notification="🔄 OpenWrt 固件编译通知\n"
+        notification+="开始时间: ${{ env.START_TIME }}\n\n"
+        notification+="📋 编译环境信息：\n"
+        notification+="• 运行环境: $(lsb_release -ds)\n"
+        notification+="• 源码分支: ${REPO_BRANCH}\n"
+        notification+="• 源码仓库: $(basename ${REPO_URL} .git)\n\n"
+        # 初始化成功和失败计数
+        success_count=0
+        fail_count=0
 
-    - name: 上传固件目录
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: OpenWrt_firmware_${{ matrix.device.name }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
+        # 读取 BUILD_RESULTS 并生成通知
+        while IFS='|' read -r device status start_time end_time link; do
+          if [ "$status" == "success" ]; then
+            notification+="✅ ${device}\n"
+            notification+="⏱️ 编译完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
+            if [ -n "$link" ]; then
+              notification+="📥 <copy data-clipboard-text=\"$link\">复制下载链接</copy>\n\n"
+            fi
+            ((success_count++))
+          else
+            notification+="❌ ${device}\n"
+            notification+="⏱️ 编译失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
+            ((fail_count++))
+          fi
+        done <<< "${{ env.BUILD_RESULTS }}"
+        
+        # 计算总耗时
+        total=$((success_count + fail_count))
+        duration=$(( $(date -d "$end_time" +%s) - $(date -d "${{ env.START_TIME }}" +%s) ))
+        hours=$((duration / 3600))
+        minutes=$(( (duration % 3600) / 60 ))
+        
+        notification+="📊 编译结果统计\n"
+        notification+="• 共 ${total} 个固件\n"
+        notification+="• ${success_count} 个成功\n"
+        notification+="• ${fail_count} 个失败\n"
+        notification+="⌛ 总耗时: ${hours}h${minutes}m\n"
+        
+        # 发送通知
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"appToken\": \"${{ env.WXPUSHER_TOKEN }}\",
+            \"content\": \"$notification\",
+            \"summary\": \"OpenWrt 固件编译完成\",
+            \"contentType\": 2,
+            \"uids\": [\"${{ env.WXPUSHER_UIDS }}\"]
+          }" \
+          https://wxpusher.zjiecode.com/api/send/message
 
-    - name: 生成发布标签
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device.name }}" >> $GITHUB_OUTPUT
-        touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: 上传固件到 Release
-      uses: ncipollo/release-action@v1
-      if: steps.tag.outputs.status == 'success' && !cancelled()
-      with:
-        artifacts: "${{ env.FIRMWARE }}/*"
-        token: ${{ secrets.GITHUB_TOKEN }}
-        tag: ${{ steps.tag.outputs.release_tag }}
-        bodyFile: "release.txt"
-        allowUpdates: true
-        replacesArtifacts: true
-
-    - name: 删除旧的工作流运行记录
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
-
-    - name: 删除旧版本
+    - name: 清理旧的发布
       uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
@@ -187,120 +193,8 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: 收集构建结果
-      id: collect_results
-      if: always()
-      run: |
-        BUILD_TIME=$(date '+%m月%d日 %H:%M')
-        END_TIMESTAMP=$(date +%s)
-        DURATION=$((END_TIMESTAMP - ${{ env.BUILD_START_TIMESTAMP }}))
-        HOURS=$((DURATION / 3600))
-        MINUTES=$(( (DURATION % 3600) / 60 ))
-        
-        # 创建共享的结果文件目录
-        mkdir -p /tmp/build_results
-        
-        # 将当前设备的结果写入独立文件
-        if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
-          RELEASE_TAG="${{ steps.tag.outputs.release_tag }}"
-          DL_LINK="https://github.com/${{ github.repository }}/releases/tag/${RELEASE_TAG}"
-          echo "${{ matrix.device.name }}|success|${BUILD_TIME}|${DL_LINK}" > "/tmp/build_results/${{ matrix.device.name }}.txt"
-        else
-          echo "${{ matrix.device.name }}|failed|${BUILD_TIME}|-" > "/tmp/build_results/${{ matrix.device.name }}.txt"
-        fi
-        
-        # 合并所有结果
-        {
-          echo "results<<EOF"
-          cat /tmp/build_results/*.txt 2>/dev/null || true
-          echo "EOF"
-        } >> $GITHUB_OUTPUT
-        
-        echo "build_duration=${HOURS}h${MINUTES}m" >> $GITHUB_OUTPUT
-
-  notify:
-    needs: build
-    runs-on: ubuntu-22.04
-    if: always()
-    steps:
-      - name: Send summary notification
-        run: |
-          # 创建临时文件存储所有结果
-          TEMP_DIR=$(mktemp -d)
-          
-          # 将结果写入临时文件
-          echo "${{ needs.build.outputs.build_results }}" > "$TEMP_DIR/results.txt"
-          
-          # 处理编译结果并生成通知内容
-          NOTIFICATION="<div style='font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px;'>"
-          
-          # 标题部分
-          NOTIFICATION="${NOTIFICATION}<div style='text-align:center;background-color:#409eff;color:white;padding:20px;border-radius:8px;margin-bottom:20px;'>"
-          NOTIFICATION="${NOTIFICATION}<h2 style='margin:0;'>🔄 OpenWrt 固件编译通知</h2>"
-          NOTIFICATION="${NOTIFICATION}<div style='margin-top:10px;font-size:14px;'>开始时间: ${{ needs.build.outputs.start_time }}</div>"
-          NOTIFICATION="${NOTIFICATION}</div>"
-          
-          # 编译环境信息
-          NOTIFICATION="${NOTIFICATION}<div style='background-color:#f8f9fa;padding:15px;border-radius:4px;margin-bottom:20px;'>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#606266;font-size:14px;'>📋 编译环境信息：</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;margin-top:5px;'>• 运行环境: Ubuntu 22.04</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码分支: ${{ needs.build.outputs.repo_branch }}</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:12px;'>• 源码仓库: <a href='${{ env.REPO_URL }}' style='color:#409eff;text-decoration:none;'>immortalwrt-mt798x</a></div>"
-          NOTIFICATION="${NOTIFICATION}</div>"
-          
-          # 编译结果
-          while IFS='|' read -r device status time link; do
-            if [ -n "$device" ]; then
-              if [ "$status" = "success" ]; then
-                # 成功项
-                NOTIFICATION="${NOTIFICATION}<div style='background-color:#f0f9eb;border-left:4px solid #67c23a;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
-                NOTIFICATION="${NOTIFICATION}<div style='color:#67c23a;font-size:16px;font-weight:bold;'>✅ ${device}</div>"
-                NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 编译完成于: ${time}</div>"
-                if [ "${link}" != "-" ]; then
-                  NOTIFICATION="${NOTIFICATION}<div style='margin:8px 0;display:flex;gap:10px;'>"
-                  NOTIFICATION="${NOTIFICATION}<a href='${link}' style='color:#409eff;text-decoration:none;font-size:13px;'>📥 下载固件</a>"
-                  NOTIFICATION="${NOTIFICATION}<copy style='color:#409eff;cursor:pointer;font-size:13px;' data-clipboard-text='${link}'>[复制链接]</copy>"
-                  NOTIFICATION="${NOTIFICATION}</div>"
-                fi
-                NOTIFICATION="${NOTIFICATION}</div>"
-              else
-                # 失败项
-                NOTIFICATION="${NOTIFICATION}<div style='background-color:#fef0f0;border-left:4px solid #f56c6c;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
-                NOTIFICATION="${NOTIFICATION}<div style='color:#f56c6c;font-size:16px;font-weight:bold;'>❌ ${device}</div>"
-                NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin:8px 0;'>⏱️ 失败时间: ${time}</div>"
-                NOTIFICATION="${NOTIFICATION}</div>"
-              fi
-            fi
-          done < "$TEMP_DIR/results.txt"
-          
-          # 统计信息
-          SUCCESS_COUNT=$(grep -c "success" "$TEMP_DIR/results.txt" || echo "0")
-          TOTAL_COUNT=$(grep -cv "^$" "$TEMP_DIR/results.txt" || echo "0")
-          FAILED_COUNT=$((TOTAL_COUNT - SUCCESS_COUNT))
-          
-          # 总结信息
-          NOTIFICATION="${NOTIFICATION}<div style='background-color:#f4f4f5;border-left:4px solid #909399;padding:15px;margin:15px 0;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.05);'>"
-          NOTIFICATION="${NOTIFICATION}<div style='font-weight:bold;color:#303133;'>📊 编译结果统计</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='display:flex;justify-content:space-between;margin-top:10px;'>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;'>• 共 ${TOTAL_COUNT} 个固件</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#67c23a;font-size:13px;'>• ${SUCCESS_COUNT} 个成功</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#f56c6c;font-size:13px;'>• ${FAILED_COUNT} 个失败</div>"
-          NOTIFICATION="${NOTIFICATION}</div>"
-          NOTIFICATION="${NOTIFICATION}<div style='color:#909399;font-size:13px;margin-top:10px;'>⌛ 总耗时: ${{ needs.build.outputs.build_duration }}</div>"
-          NOTIFICATION="${NOTIFICATION}</div>"
-          
-          NOTIFICATION="${NOTIFICATION}</div>"
-          
-          # 构建 JSON 数据并发送通知
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"appToken\": \"AT_ryo91ZPH31fKLonPBFN5UwlxTkPl7Vf0\",
-              \"content\": \"${NOTIFICATION}\",
-              \"summary\": \"OpenWrt 固件编译完成\",
-              \"contentType\": 2,
-              \"uids\": [\"UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k\"]
-            }" \
-            https://wxpusher.zjiecode.com/api/send/message
-          
-          rm -rf "$TEMP_DIR"  # 清理临时目录
+    - name: 清理工作流运行记录
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2 
