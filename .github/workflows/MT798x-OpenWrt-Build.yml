@@ -13,8 +13,11 @@ on:
         required: true
         type: choice
         options:
-          - all
-          - auto  # 添加一个auto选项，表示自动获取设备列表
+          - 全部
+          - AX6000
+          - WR30U
+          - 360T7
+        default: '全部'
 
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
@@ -80,18 +83,18 @@ jobs:
     - name: 编译固件
       id: build
       run: |
-        if [ "${{ github.event.inputs.device_selection }}" = "all" ] || [ "${{ github.event.inputs.device_selection }}" = "auto" ]; then
-          # 从配置目录动态获取设备列表
-          cd $GITHUB_WORKSPACE
-          DEVICES=($(ls ./config/21.02/immortalwrtARM/))
+        if [ "${{ github.event.inputs.device_selection }}" = "全部" ]; then
+          DEVICES=("AX6000" "WR30U" "360T7")
         else
           DEVICES=("${{ github.event.inputs.device_selection }}")
         fi
         
         echo "检测到的设备列表：${DEVICES[@]}"
-        
+
+        # results初始化编译结果，作用是保存编译结果
         results=""
         
+        # 遍历设备列表，开始编译
         for device in "${DEVICES[@]}"; do
           device_start_time=$(date '+%Y-%m-%d %H:%M:%S')
           echo "开始编译 ${device} 固件..."
