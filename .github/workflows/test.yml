@@ -75,8 +75,11 @@ jobs:
         notification+="• ${fail_count} 个失败\n"
         notification+="⌛ 总耗时: 1h30m (测试数据)\n"
         
+        echo "DEBUG: 准备发送的通知内容:"
+        echo "$notification"
+        
         echo "DEBUG: 开始发送通知"
-        curl -v -X POST \
+        response=$(curl -v -X POST \
           -H "Content-Type: application/json" \
           -d "{
             \"appToken\": \"${WXPUSHER_TOKEN}\",
@@ -85,4 +88,14 @@ jobs:
             \"contentType\": 2,
             \"uids\": [\"${WXPUSHER_UIDS}\"]
           }" \
-          https://wxpusher.zjiecode.com/api/send/message
+          https://wxpusher.zjiecode.com/api/send/message 2>&1)
+        
+        echo "DEBUG: API 响应:"
+        echo "$response"
+        
+        # 检查 curl 是否成功
+        if [ $? -ne 0 ]; then
+          echo "ERROR: 发送通知失败"
+          echo "$response"
+          exit 1
+        fi
