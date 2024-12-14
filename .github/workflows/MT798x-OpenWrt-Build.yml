@@ -166,7 +166,7 @@ jobs:
 
     - name: 上传 bin 目录
       uses: actions/upload-artifact@main
-      # 判断是否上传 bin 目录���UPLOAD_BIN_DIR等于true时上传
+      # 判断是否上传 bin 目录,UPLOAD_BIN_DIR等于true时上传
       if: env.UPLOAD_BIN_DIR == 'true' && !cancelled()
       with:
         name: OpenWrt_bin_${{ github.event.inputs.device_selection }}_$(date +%Y%m%d_%H%M)
@@ -204,8 +204,6 @@ jobs:
         fi
         # 设置发布标签
         echo "release_tag=$release_tag" >> $GITHUB_ENV
-        # 创建 release.txt 文件
-        touch release.txt
 
     - name: 上传固件到 Releases
       uses: softprops/action-gh-release@v1
