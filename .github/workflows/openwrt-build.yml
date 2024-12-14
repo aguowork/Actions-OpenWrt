@@ -8,10 +8,16 @@ on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
-      devices:
-        description: '选择要编译的设备 (多选用逗号分隔: AX6000,WR30U,360T7)'
+      device_selection:
+        description: '选择要编译的设备'
         required: true
-        default: 'AX6000,WR30U,360T7'
+        type: choice
+        options:
+          - 'all'
+          - 'AX6000'
+          - 'WR30U'
+          - '360T7'
+        default: 'all'
 
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
@@ -64,7 +70,13 @@ jobs:
     - name: Build Firmware
       id: build
       run: |
-        IFS=',' read -ra DEVICES <<< "${{ github.event.inputs.devices }}"
+        # 根据选择设置设备列表
+        if [ "${{ github.event.inputs.device_selection }}" = "all" ]; then
+          DEVICES=("AX6000" "WR30U" "360T7")
+        else
+          DEVICES=("${{ github.event.inputs.device_selection }}")
+        fi
+        
         results=""
         
         for device in "${DEVICES[@]}"; do
