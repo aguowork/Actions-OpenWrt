@@ -100,69 +100,50 @@ jobs:
         total_devices=${#DEVICES[@]}
         current_device=0
         
-        # 使用JSON格式存储结果，便于后续处理
-        results="["
-        
         for device in "${DEVICES[@]}"; do
           ((current_device++))
           echo "📌 正在编译 [$current_device/$total_devices] ${device}..."
-          device_start_time=$(date '+%Y-%m-%d %H:%M:%S')
           
-          # 设置设备特定的配置和脚本路径
-          CONFIG_FILE="./config/21.02/immortalwrtARM/${device}/${device}-mtwifi-cfg.config"
-          DIY_P1_SH="./diy/21.02/immortalwrtARM/${device}/diy-part1.sh"
-          DIY_P2_SH="./diy/21.02/immortalwrtARM/${device}/diy-part2.sh"
+          # 为每个设备创建独立的编译目录
+          work_dir="/workdir/build_${device}"
+          mkdir -p "$work_dir"
           
-          # 检查必要文件
-          if [ ! -e $CONFIG_FILE ]; then
-            echo "❌ 配置文件不存在: $CONFIG_FILE"
-            status="failed"
-            continue
-          fi
-
-          # 进入 openwrt 目录
+          # 重新克隆源码到设备特定目录
+          cd "$work_dir"
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
           cd openwrt
-          # 复制配置文件 
-          [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
-          # 执行自定义脚本
-          [ -e $GITHUB_WORKSPACE/$DIY_P2_SH ] && chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH && $GITHUB_WORKSPACE/$DIY_P2_SH
           
+          # 设置设备特定的配置
+          CONFIG_FILE="$GITHUB_WORKSPACE/config/21.02/immortalwrtARM/${device}/${device}-mtwifi-cfg.config"
+          DIY_P1_SH="$GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/${device}/diy-part1.sh"
+          DIY_P2_SH="$GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/${device}/diy-part2.sh"
+          
+          # 更新feeds
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          
+          # 应用配置和自定义脚本
+          [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" .config
+          [ -e "$DIY_P2_SH" ] && chmod +x "$DIY_P2_SH" && "$DIY_P2_SH"
+          
+          # 编译
           make defconfig
           make download -j8
-          # 检查下载的包
-          find dl -size -1024c -exec ls -l {} \;
-          find dl -size -1024c -exec rm -f {} \;
-          
           echo "🔨 开始编译 ${device}..."
           make -j$(nproc) || make -j1 V=s
-          # 检查编译结果，成功则记录编译结果，失败则记录失败
+          
+          # 检查编译结果
           if [ $? -eq 0 ]; then
-            status="success"
-            device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
-            # 获取固件路径（在 bin/targets 目录下查找升级固件）
-            firmware_files=$(find bin/targets/ -iname "*${device}*squashfs-sysupgrade.bin")
-            # 获取升级固件大小，作用是显示固件大小
-            firmware_size=$(ls -lh $firmware_files 2>/dev/null | awk '{print $5}' || echo "未知")
-            echo "✅ ${device} 编译成功 (固件大小: ${firmware_size})"
+            echo "✅ ${device} 编译成功"
+            # 移动编译成功的固件到统一目录
+            mkdir -p "$GITHUB_WORKSPACE/firmware/${device}"
+            cp -r bin/targets/*/* "$GITHUB_WORKSPACE/firmware/${device}/"
           else
-            # 编译失败
-            status="failed"
-            device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
-            firmware_size="未知"
             echo "❌ ${device} 编译失败"
           fi
           
-          # 添加JSON格式的编译结果
-          [ "$current_device" -gt 1 ] && results="${results},"
-          results="${results}{\"device\":\"${device}\",\"status\":\"${status}\",\"start_time\":\"${device_start_time}\",\"end_time\":\"${device_end_time}\",\"size\":\"${firmware_size}\"}"
-          
-          cd $GITHUB_WORKSPACE
+          cd "$GITHUB_WORKSPACE"
         done
-        
-        results="${results}]"
-        echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
-        echo "$results" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
 
     - name: 上传 bin 目录
       uses: actions/upload-artifact@main
@@ -176,8 +157,7 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
+        cd firmware
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
