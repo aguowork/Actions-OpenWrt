@@ -12,8 +12,9 @@ on:
         description: '选择要编译的设备'
         required: true
         type: choice
-        options: ${{ fromJson(vars.SUPPORTED_DEVICES) }}
-        default: 'all'
+        options:
+          - all
+          - auto  # 添加一个auto选项，表示自动获取设备列表
 
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
@@ -79,12 +80,15 @@ jobs:
     - name: 编译固件
       id: build
       run: |
-        # 从仓库变量获取设备列表
-        if [ "${{ github.event.inputs.device_selection }}" = "all" ]; then
-          DEVICES=($(echo "${{ vars.SUPPORTED_DEVICES }}" | jq -r '.[]'))
+        if [ "${{ github.event.inputs.device_selection }}" = "all" ] || [ "${{ github.event.inputs.device_selection }}" = "auto" ]; then
+          # 从配置目录动态获取设备列表
+          cd $GITHUB_WORKSPACE
+          DEVICES=($(ls ./config/21.02/immortalwrtARM/))
         else
           DEVICES=("${{ github.event.inputs.device_selection }}")
         fi
+        
+        echo "检测到的设备列表：${DEVICES[@]}"
         
         results=""
         
