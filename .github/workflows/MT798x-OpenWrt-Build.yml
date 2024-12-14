@@ -74,9 +74,8 @@ jobs:
 
     - name: 加载自定义 feeds 配置
       run: |
+        # 只移动 feeds 配置文件，不执行 DIY 脚本
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        cd openwrt
-        [ -e $GITHUB_WORKSPACE/$DIY_P1_SH ] && chmod +x $GITHUB_WORKSPACE/$DIY_P1_SH && $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: 更新并安装软件源
       run: |
