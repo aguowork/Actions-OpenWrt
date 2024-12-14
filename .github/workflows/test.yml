@@ -16,13 +16,14 @@ jobs:
     - name: 初始化测试环境
       run: |
         echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-        # 修改 BUILD_RESULTS 的设置方式
-        BUILD_RESULTS="AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://github.com/${{ github.repository }}/releases/download/latest/AX6000-firmware.bin
-WR30U|success|2024-01-01 10:30:00|2024-01-01 11:00:00|https://github.com/${{ github.repository }}/releases/download/latest/WR30U-firmware.bin
-360T7|success|2024-01-01 11:00:00|2024-01-01 11:30:00|https://github.com/${{ github.repository }}/releases/download/latest/360T7-firmware.bin"
-        echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
-        echo "$BUILD_RESULTS" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
+        # 使用正确的多行字符串格式
+        {
+          echo "BUILD_RESULTS<<EOF"
+          echo "AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://github.com/${{ github.repository }}/releases/download/latest/AX6000-firmware.bin"
+          echo "WR30U|success|2024-01-01 10:30:00|2024-01-01 11:00:00|https://github.com/${{ github.repository }}/releases/download/latest/WR30U-firmware.bin"
+          echo "360T7|success|2024-01-01 11:00:00|2024-01-01 11:30:00|https://github.com/${{ github.repository }}/releases/download/latest/360T7-firmware.bin"
+          echo "EOF"
+        } >> $GITHUB_ENV
 
     - name: 发送编译通知
       if: always()
@@ -83,7 +84,6 @@ WR30U|success|2024-01-01 10:30:00|2024-01-01 11:00:00|https://github.com/${{ git
         
         echo "DEBUG: 准备发送的通知内容:"
         echo "$notification"
-        
         
         echo "DEBUG: 开始发送通知"
         response=$(curl -v -X POST \
