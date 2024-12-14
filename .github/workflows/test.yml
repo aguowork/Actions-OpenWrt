@@ -1,7 +1,7 @@
 name: 测试推送通知
 
 on:
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 env:
   TZ: Asia/Shanghai
@@ -11,48 +11,47 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 初始化测试环境
-      run: |
-        echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-        # 模拟编译结果
-        echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
-        echo -e "AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://example.com/AX6000.bin\nWR30U|failed|2024-01-01 10:00:00|2024-01-01 10:15:00|\n" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
-
     - name: 发送测试通知
-      if: always()
       run: |
-        if [ -z "${{ secrets.WXPUSHER_TOKEN }}" ] || [ -z "${{ secrets.WXPUSHER_UIDS }}" ]; then
-          echo "错误：未设置 WXPUSHER_TOKEN 或 WXPUSHER_UIDS"
+        # 检查必要的变量是否存在
+        if [ -z "${{ secrets.WXPUSHER_TOKEN }}" ]; then
+          echo "错误：未设置 WXPUSHER_TOKEN"
           exit 1
         fi
         
-        notification="🔄 测试通知\n"
-        notification+="开始时间: ${{ env.START_TIME }}\n\n"
-        notification+="📋 测试信息：\n"
-        notification+="• 这是一条测试消息\n"
-        notification+="• 用于验证推送功能\n\n"
+        if [ -z "${{ secrets.WXPUSHER_UIDS }}" ]; then
+          echo "错误：未设置 WXPUSHER_UIDS"
+          exit 1
+        fi
         
-        while IFS='|' read -r device status start_time end_time link; do
-          if [ "$status" == "success" ]; then
-            notification+="✅ ${device}\n"
-            notification+="⏱️ 测试完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
-            if [ -n "$link" ]; then
-              notification+="📥 <copy data-clipboard-text=\"$link\">复制下载链接</copy>\n\n"
-            fi
-          else
-            notification+="❌ ${device}\n"
-            notification+="⏱️ 测试失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
-          fi
-        done <<< "${{ env.BUILD_RESULTS }}"
+        # 生成测试消息
+        message="🔄 测试通知\n\n"
+        message+="📋 测试信息：\n"
+        message+="• 这是一条测试消息\n"
+        message+="• 用于验证推送功能\n"
         
-        curl -X POST \
+        # 将消息转换为 JSON 格式
+        json_message=$(echo "$message" | jq -Rsa .)
+        
+        # 构建完整的 JSON 数据
+        json_data="{
+          \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
+          \"content\": ${json_message},
+          \"summary\": \"OpenWrt 测试通知\",
+          \"contentType\": 2,
+          \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
+        }"
+        
+        # 输出请求数据（调试用）
+        echo "发送的数据："
+        echo "$json_data" | jq .
+        
+        # 发送请求
+        response=$(curl -X POST \
           -H "Content-Type: application/json" \
-          -d "{
-            \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
-            \"content\": \"$notification\",
-            \"summary\": \"OpenWrt 测试通知\",
-            \"contentType\": 2,
-            \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
-          }" \
-          https://wxpusher.zjiecode.com/api/send/message
+          -d "$json_data" \
+          https://wxpusher.zjiecode.com/api/send/message)
+        
+        # 输出响应结果
+        echo "接口返回："
+        echo "$response" | jq .
