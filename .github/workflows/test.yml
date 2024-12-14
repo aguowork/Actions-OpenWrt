@@ -1,0 +1,73 @@
+name: 测试推送通知
+
+on:
+  workflow_dispatch:
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  test-notification:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: 初始化测试环境
+      run: |
+        echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+        # 模拟三个设备的成功编译结果
+        echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
+        echo "AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://github.com/${{ github.repository }}/releases/download/latest/AX6000-firmware.bin" >> $GITHUB_ENV
+        echo "WR30U|success|2024-01-01 10:30:00|2024-01-01 11:00:00|https://github.com/${{ github.repository }}/releases/download/latest/WR30U-firmware.bin" >> $GITHUB_ENV
+        echo "360T7|success|2024-01-01 11:00:00|2024-01-01 11:30:00|https://github.com/${{ github.repository }}/releases/download/latest/360T7-firmware.bin" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+
+    - name: 发送编译通知
+      if: always()
+      run: |
+        if [ -z "${{ secrets.WXPUSHER_TOKEN }}" ] || [ -z "${{ secrets.WXPUSHER_UIDS }}" ]; then
+          echo "警告：WXPusher 配置未设置，跳过通知发送"
+          exit 0
+        fi
+        
+        notification="🔄 OpenWrt 固件编译通知\n"
+        notification+="开始时间: ${{ env.START_TIME }}\n\n"
+        notification+="📋 编译环境信息：\n"
+        notification+="• 运行环境: $(lsb_release -ds)\n"
+        notification+="• 测试通知\n\n"
+        
+        success_count=0
+        fail_count=0
+
+        while IFS='|' read -r device status start_time end_time link; do
+          if [ "$status" == "success" ]; then
+            notification+="✅ ${device}\n"
+            notification+="⏱️ 编译完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
+            if [ -n "$link" ]; then
+              notification+="📥 <copy data-clipboard-text=\"$link\">复制下载链接</copy>\n\n"
+            fi
+            ((success_count++))
+          else
+            notification+="❌ ${device}\n"
+            notification+="⏱️ 编译失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
+            ((fail_count++))
+          fi
+        done <<< "${{ env.BUILD_RESULTS }}"
+        
+        total=$((success_count + fail_count))
+        
+        notification+="📊 编译结果统计\n"
+        notification+="• 共 ${total} 个固件\n"
+        notification+="• ${success_count} 个成功\n"
+        notification+="• ${fail_count} 个失败\n"
+        notification+="⌛ 总耗时: 1h30m (测试数据)\n"
+        
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
+            \"content\": \"$notification\",
+            \"summary\": \"OpenWrt 固件编译完成\",
+            \"contentType\": 2,
+            \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
+          }" \
+          https://wxpusher.zjiecode.com/api/send/message
