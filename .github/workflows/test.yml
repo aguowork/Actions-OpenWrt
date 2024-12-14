@@ -1,108 +1,58 @@
 name: 测试推送通知
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 允许手动触发
 
 env:
   TZ: Asia/Shanghai
-  WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
-  WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
 
 jobs:
-  test-notification:
-    runs-on: ubuntu-22.04
-
+  test:
+    runs-on: ubuntu-latest
+    
     steps:
     - name: 初始化测试环境
       run: |
         echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-        # 使用正确的多行字符串格式
-        {
-          echo "BUILD_RESULTS<<EOF"
-          echo "AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://github.com/${{ github.repository }}/releases/download/latest/AX6000-firmware.bin"
-          echo "WR30U|success|2024-01-01 10:30:00|2024-01-01 11:00:00|https://github.com/${{ github.repository }}/releases/download/latest/WR30U-firmware.bin"
-          echo "360T7|success|2024-01-01 11:00:00|2024-01-01 11:30:00|https://github.com/${{ github.repository }}/releases/download/latest/360T7-firmware.bin"
-          echo "EOF"
-        } >> $GITHUB_ENV
+        # 模拟编译结果
+        echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
+        echo -e "AX6000|success|2024-01-01 10:00:00|2024-01-01 10:30:00|https://example.com/AX6000.bin\nWR30U|failed|2024-01-01 10:00:00|2024-01-01 10:15:00|\n" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
 
-    - name: 发送编译通知
+    - name: 发送测试通知
       if: always()
       run: |
-        # 添加调试信息
-        echo "DEBUG: BUILD_RESULTS 内容:"
-        echo "$BUILD_RESULTS"
-        
-        # 更详细的调试信息
-        echo "DEBUG: 检查 secrets 是否存在"
-        echo "WXPUSHER_TOKEN exists: ${{ secrets.WXPUSHER_TOKEN != '' }}"
-        echo "WXPUSHER_UIDS exists: ${{ secrets.WXPUSHER_UIDS != '' }}"
-        
-        echo "DEBUG: 打印环境变量"
-        echo "WXPUSHER_TOKEN 长度: ${#WXPUSHER_TOKEN}"
-        echo "WXPUSHER_UIDS 长度: ${#WXPUSHER_UIDS}"
-        
-        if [ -z "${WXPUSHER_TOKEN}" ] || [ -z "${WXPUSHER_UIDS}" ]; then
-          echo "警告：WXPusher 配置未设置，跳过通知发送"
-          exit 0
+        if [ -z "${{ secrets.WXPUSHER_TOKEN }}" ] || [ -z "${{ secrets.WXPUSHER_UIDS }}" ]; then
+          echo "错误：未设置 WXPUSHER_TOKEN 或 WXPUSHER_UIDS"
+          exit 1
         fi
         
-        echo "DEBUG: 配置验证通过，开始准备通知内容"
-        
-        # 准备通知内容
-        notification="🔄 OpenWrt 固件编译通知\n"
+        notification="🔄 测试通知\n"
         notification+="开始时间: ${{ env.START_TIME }}\n\n"
-        notification+="📋 编译环境信息：\n"
-        notification+="• 运行环境: $(lsb_release -ds)\n"
-        notification+="• 测试通知\n\n"
+        notification+="📋 测试信息：\n"
+        notification+="• 这是一条测试消息\n"
+        notification+="• 用于验证推送功能\n\n"
         
-        success_count=0
-        fail_count=0
-
         while IFS='|' read -r device status start_time end_time link; do
-          echo "DEBUG: 处理设备: $device"
           if [ "$status" == "success" ]; then
             notification+="✅ ${device}\n"
-            notification+="⏱️ 编译完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
+            notification+="⏱️ 测试完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
             if [ -n "$link" ]; then
               notification+="📥 <copy data-clipboard-text=\"$link\">复制下载链接</copy>\n\n"
             fi
-            ((success_count++))
           else
             notification+="❌ ${device}\n"
-            notification+="⏱️ 编译失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
-            ((fail_count++))
+            notification+="⏱️ 测试失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
           fi
-        done <<< "${BUILD_RESULTS}"
+        done <<< "${{ env.BUILD_RESULTS }}"
         
-        total=$((success_count + fail_count))
-        
-        notification+="📊 编译结果统计\n"
-        notification+="• 共 ${total} 个固件\n"
-        notification+="• ${success_count} 个成功\n"
-        notification+="• ${fail_count} 个失败\n"
-        notification+="⌛ 总耗时: 1h30m (测试数据)\n"
-        
-        echo "DEBUG: 准备发送的通知内容:"
-        echo "$notification"
-        
-        echo "DEBUG: 开始发送通知"
-        response=$(curl -v -X POST \
+        curl -X POST \
           -H "Content-Type: application/json" \
           -d "{
-            \"appToken\": \"${WXPUSHER_TOKEN}\",
+            \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
             \"content\": \"$notification\",
-            \"summary\": \"OpenWrt 固件编译完成\",
+            \"summary\": \"OpenWrt 测试通知\",
             \"contentType\": 2,
-            \"uids\": [\"${WXPUSHER_UIDS}\"]
+            \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
           }" \
-          https://wxpusher.zjiecode.com/api/send/message 2>&1)
-        
-        echo "DEBUG: API 响应:"
-        echo "$response"
-        
-        # 检查 curl 是否成功
-        if [ $? -ne 0 ]; then
-          echo "ERROR: 发送通知失败"
-          echo "$response"
-          exit 1
-        fi
+          https://wxpusher.zjiecode.com/api/send/message
