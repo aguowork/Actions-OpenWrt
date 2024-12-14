@@ -87,113 +87,113 @@ jobs:
           DEVICES=("${{ github.event.inputs.device_selection }}")
         fi
         
-        echo "检测到的设备列表：${DEVICES[@]}"
-
-        # results初始化编译结果，作用是保存编译结果
-        results=""
+        echo "🔍 检测到设备: ${DEVICES[@]}"
+        total_devices=${#DEVICES[@]}
+        current_device=0
         
-        # 遍历设备列表，开始编译
+        # 使用JSON格式存储结果，便于后续处理
+        results="["
+        
         for device in "${DEVICES[@]}"; do
+          ((current_device++))
+          echo "📌 正在编译 [$current_device/$total_devices] ${device}..."
           device_start_time=$(date '+%Y-%m-%d %H:%M:%S')
-          echo "开始编译 ${device} 固件..."
           
-          # 设置设备特定的配置文件
+          # 设置设备配置
           CONFIG_FILE="./config/21.02/immortalwrtARM/${device}/${device}-mtwifi-cfg.config"
           DIY_P1_SH="./diy/21.02/immortalwrtARM/${device}/diy-part1.sh"
           DIY_P2_SH="./diy/21.02/immortalwrtARM/${device}/diy-part2.sh"
           
-          # 加载配置
           cd openwrt
           [ -e $CONFIG_FILE ] && cp $CONFIG_FILE .config
           [ -e $DIY_P1_SH ] && chmod +x $DIY_P1_SH && $GITHUB_WORKSPACE/$DIY_P1_SH
           [ -e $DIY_P2_SH ] && chmod +x $DIY_P2_SH && $GITHUB_WORKSPACE/$DIY_P2_SH
           
-          # 编译固件
           make defconfig
           make download -j8
+          echo "🔨 开始编译 ${device}..."
           make -j$(nproc) || make -j1 V=s
-
-          # 判断编译是否成功，成功则记录固件链接，失败则记录失败时间
+          
           if [ $? -eq 0 ]; then
             status="success"
             device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
+            firmware_path="bin/targets/*/${device}-firmware.bin"
+            firmware_size=$([ -f $firmware_path ] && ls -lh $firmware_path | awk '{print $5}' || echo "未知")
             firmware_link="https://github.com/${{ github.repository }}/releases/download/latest/${device}-firmware.bin"
-            results="${results}${device}|${status}|${device_start_time}|${device_end_time}|${firmware_link}\n"
+            echo "✅ ${device} 编译成功 (大小: ${firmware_size})"
           else
             status="failed"
             device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
-            results="${results}${device}|${status}|${device_start_time}|${device_end_time}|\n"
+            firmware_size=""
+            firmware_link=""
+            echo "❌ ${device} 编译失败"
           fi
-          # 返回工作目录
+          
+          # 添加JSON格式的编译结果
+          [ "$current_device" -gt 1 ] && results="${results},"
+          results="${results}{\"device\":\"${device}\",\"status\":\"${status}\",\"start_time\":\"${device_start_time}\",\"end_time\":\"${device_end_time}\",\"size\":\"${firmware_size}\",\"link\":\"${firmware_link}\"}"
+          
           cd $GITHUB_WORKSPACE
         done
         
-        # 保存编译结果
+        results="${results}]"
         echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
-        # 将编译结果写入 GITHUB_ENV
-        echo -e "$results" >> $GITHUB_ENV
-        # 结束保存
+        echo "$results" >> $GITHUB_ENV
         echo "EOF" >> $GITHUB_ENV
 
     - name: 发送编译通知
       if: always()
       run: |
-        # 检查必要的变量是否存在
         if [ -z "${{ secrets.WXPUSHER_TOKEN }}" ] || [ -z "${{ secrets.WXPUSHER_UIDS }}" ]; then
-          echo "警告：WXPusher 配置未设置，跳过通知发送"
+          echo "⚠️ WXPusher配置未设置，跳过通知"
           exit 0
         fi
         
-        # 生成通知内容
-        notification="🔄 OpenWrt 固件编译通知\n"
-        notification+="开始时间: ${{ env.START_TIME }}\n\n"
-        notification+="📋 编译环境信息：\n"
-        notification+="• 运行环境: $(lsb_release -ds)\n"
-        notification+="• 源码分支: ${REPO_BRANCH}\n"
-        notification+="• 源码仓库: $(basename ${REPO_URL} .git)\n\n"
-        # 初始化成功和失败计数
+        notification="📦 OpenWrt固件编译完成\\n\\n"
+        
+        # 统计数据
         success_count=0
         fail_count=0
-
-        # 读取 BUILD_RESULTS 并生成通知
-        while IFS='|' read -r device status start_time end_time link; do
-          if [ "$status" == "success" ]; then
-            notification+="✅ ${device}\n"
-            notification+="⏱️ 编译完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
-            if [ -n "$link" ]; then
-              notification+="📥 <copy data-clipboard-text=\"$link\">复制下载链接</copy>\n\n"
-            fi
+        
+        # 解析JSON格式的编译结果
+        echo "${{ env.BUILD_RESULTS }}" | jq -c '.[]' | while read -r item; do
+          device=$(echo "$item" | jq -r '.device')
+          status=$(echo "$item" | jq -r '.status')
+          size=$(echo "$item" | jq -r '.size')
+          link=$(echo "$item" | jq -r '.link')
+          
+          if [ "$status" = "success" ]; then
             ((success_count++))
+            # 使用Markdown格式的链接，点击设备名称即可复制下载链接
+            notification+="✅ [${device}](copy:${link}) (${size})\\n"
           else
-            notification+="❌ ${device}\n"
-            notification+="⏱️ 编译失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
             ((fail_count++))
+            notification+="❌ ${device}\\n"
           fi
-        done <<< "${{ env.BUILD_RESULTS }}"
+        done
         
         # 计算总耗时
-        total=$((success_count + fail_count))
-        duration=$(( $(date -d "$end_time" +%s) - $(date -d "${{ env.START_TIME }}" +%s) ))
+        duration=$(( $(date +%s) - $(date -d "${{ env.START_TIME }}" +%s) ))
         hours=$((duration / 3600))
         minutes=$(( (duration % 3600) / 60 ))
         
-        notification+="📊 编译结果统计\n"
-        notification+="• 共 ${total} 个固件\n"
-        notification+="• ${success_count} 个成功\n"
-        notification+="• ${fail_count} 个失败\n"
-        notification+="⌛ 总耗时: ${hours}h${minutes}m\n"
+        total=$((success_count + fail_count))
+        notification+="\\n📊 统计: ${success_count}/${total} 成功"
+        [ $fail_count -gt 0 ] && notification+=" (${fail_count} 失败)"
+        notification+="\\n⏱️ 耗时: ${hours}h${minutes}m"
         
         # 发送通知
         curl -X POST \
           -H "Content-Type: application/json" \
+          --retry 3 \
           -d "{
             \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
             \"content\": \"$notification\",
-            \"summary\": \"OpenWrt 固件编译完成\",
-            \"contentType\": 2,
+            \"summary\": \"OpenWrt编译完成 [${success_count}/${total}]\",
+            \"contentType\": 3,
             \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
           }" \
-          https://wxpusher.zjiecode.com/api/send/message
+          https://wxpusher.zjiecode.com/api/send/message || echo "❌ 通知发送失败"
 
     - name: 清理旧的发布
       uses: dev-drprasad/delete-older-releases@master
