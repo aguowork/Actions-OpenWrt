@@ -51,6 +51,11 @@ jobs:
             diy_p2_sh: ./diy/21.02/immortalwrtARM/360T7/diy-part2.sh
     
     steps:
+    - name: Record workflow start time  # 记录工作流开始时间
+      id: workflow_time
+      run: |
+        echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+
     - name: Check if should build
       id: check
       run: |
@@ -209,23 +214,19 @@ jobs:
     - name: Send build notification  # 发送编译完成通知
       if: always()
       run: |
-        # 获取编译开始时间和结束时间
-        START_TIME="${{ steps.compile.outputs.start_time }}"
-        END_TIME="${{ steps.compile.outputs.end_time }}"
-        if [ -z "$START_TIME" ]; then
-          START_TIME=$(date -d "@${{ github.event.repository.pushed_at }}" '+%Y-%m-%d %H:%M:%S')
-        fi
-        if [ -z "$END_TIME" ]; then
-          END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
-        fi
+        # 获取时间信息
+        START_TIME="${{ steps.workflow_time.outputs.start_time }}"
+        END_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
         
-        # 计算编译耗时
+        # 计算耗时
         DURATION=$(( $(date -d "$END_TIME" +%s) - $(date -d "$START_TIME" +%s) ))
         HOURS=$((DURATION / 3600))
         MINUTES=$(( (DURATION % 3600) / 60 ))
         
-        # 检查编译状态
-        if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
+        # 检查编译状态和获取失败原因
+        if [ "${{ steps.compile.outputs.status }}" = "success" ] && \
+           [ "${{ steps.organize.outputs.status }}" = "success" ] && \
+           [ "${{ steps.tag.outputs.status }}" = "success" ]; then
           BUILD_STATUS="✅"
           STATUS_MSG="编译完成于"
           FIRMWARE_LINE="<li>📥 升级固件：<a href='javascript:void(0);' onclick='navigator.clipboard.writeText(\"${{ steps.firmware.outputs.download_url }}\")'>复制下载链接</a></li>"
@@ -233,7 +234,18 @@ jobs:
           BUILD_STATUS="❌"
           STATUS_MSG="编译失败于"
           FIRMWARE_LINE=""
-        fi        
+          # 添加失败原因
+          if [ "${{ steps.compile.conclusion }}" = "failure" ]; then
+            FAILURE_REASON="编译失败"
+          elif [ "${{ steps.organize.conclusion }}" = "failure" ]; then
+            FAILURE_REASON="文件整理失败"
+          elif [ "${{ steps.tag.conclusion }}" = "failure" ]; then
+            FAILURE_REASON="发布失败"
+          else
+            FAILURE_REASON="未知原因"
+          fi
+        fi
+        
         # 构建通知内容
         NOTIFICATION="<h2>🔄 OpenWrt 固件编译通知</h2>
         
@@ -250,6 +262,7 @@ jobs:
           <li>⏱️ ${STATUS_MSG}: $(date '+%m月%d日 %H:%M')</li>
           ${FIRMWARE_LINE}
           <li>⌛ 总耗时: ${HOURS}h${MINUTES}m</li>
+          ${FAILURE_REASON:+<li>❗ 失败原因: ${FAILURE_REASON}</li>}
         </ul>"
         
         # 转义JSON特殊字符
