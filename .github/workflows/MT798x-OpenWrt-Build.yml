@@ -224,21 +224,31 @@ jobs:
         HOURS=$((DURATION / 3600))
         MINUTES=$(( (DURATION % 3600) / 60 ))
         
+        # 检查编译状态
+        if [ "${{ steps.compile.outputs.status }}" = "success" ]; then
+          BUILD_STATUS="✅"
+          STATUS_MSG="编译完成于"
+          FIRMWARE_LINE="<li>📥 升级固件：<a href='javascript:void(0);' onclick='navigator.clipboard.writeText(\"${{ steps.firmware.outputs.download_url }}\")'>复制下载链接</a></li>"
+        else
+          BUILD_STATUS="❌"
+          STATUS_MSG="编译失败于"
+          FIRMWARE_LINE=""
+        fi        
         # 构建通知内容
         NOTIFICATION="<h2>🔄 OpenWrt 固件编译通知</h2>
         
         <h3>📋 编译环境信息：</h3>
         <ul>
-          <li>运行环境: Ubuntu 22.04</li>
+          <li>运行环境: ${{ runner.os }}-${{ runner.arch }}</li>
           <li>源码分支: ${REPO_BRANCH}</li>
-          <li>源码仓库: immortalwrt-mt798x</li>
+          <li>源码仓库: $(basename ${REPO_URL} .git)</li>
           <li>开始时间: ${START_TIME}</li>
         </ul>
         
-        <h3>✅ ${{ matrix.device }}</h3>
+        <h3>${BUILD_STATUS} ${{ matrix.device }}</h3>
         <ul>
-          <li>⏱️ 编译完成于: $(date '+%m月%d日 %H:%M')</li>
-          <li>📥 下载固件：<a href='javascript:void(0);' onclick='navigator.clipboard.writeText(\"${{ steps.firmware.outputs.download_url }}\")'>点击复制链接</a></li>
+          <li>⏱️ ${STATUS_MSG}: $(date '+%m月%d日 %H:%M')</li>
+          ${FIRMWARE_LINE}
           <li>⌛ 总耗时: ${HOURS}h${MINUTES}m</li>
         </ul>"
         
