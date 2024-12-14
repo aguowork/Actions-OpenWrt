@@ -1,156 +1,174 @@
-name: OpenWrt 固件自动编译
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# MT798x 系列路由器固件自动编译脚本
+
+name: MT798x OpenWrt Build
 
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
-      device:
-        description: '选择设备'
-        required: false
-        type: choice
-        options:
-          - all
-          - AX6000
-          - WR30U
-          - 360T7
+      devices:
+        description: '选择要编译的设备 (多选用逗号分隔: AX6000,WR30U,360T7)'
+        required: true
+        default: 'AX6000,WR30U,360T7'
 
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git
   REPO_BRANCH: openwrt-21.02
+  FEEDS_CONF: feeds.conf.default
+  UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
-  WORKDIR: /workdir
+  WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
+  WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
 
 jobs:
-  prepare:
-    runs-on: ubuntu-22.04
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: 检查输入
-        id: set-matrix
-        run: |
-          if [ "${{ github.event.inputs.device }}" = "all" ] || [ -z "${{ github.event.inputs.device }}" ]; then
-            echo "matrix={\"device\":[\"AX6000\",\"WR30U\",\"360T7\"]}" >> $GITHUB_OUTPUT
-          else
-            echo "matrix={\"device\":[\"${{ github.event.inputs.device }}\"]}" >> $GITHUB_OUTPUT
-          fi
-
   build:
-    needs: prepare
     runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix: ${{fromJson(needs.prepare.outputs.matrix)}}
 
     steps:
-      - name: 初始化环境
-        run: |
-          sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android
-          sudo -E apt-get -qq update
-          sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/P3TERX/openwrt-build-env/master/build-env-on-ubuntu-focal)
-          sudo -E apt-get -qq autoremove --purge
-          sudo -E apt-get -qq clean
-          sudo timedatectl set-timezone "$TZ"
+    - name: Checkout
+      uses: actions/checkout@main
 
-      - name: 检出代码
-        uses: actions/checkout@v4
+    - name: Initialize Environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install $(curl -fsSL https://raw.githubusercontent.com/P3TERX/Actions-OpenWrt/master/depends-ubuntu-2204)
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+        echo "START_TIME=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+        echo "BUILD_RESULTS=" >> $GITHUB_ENV
 
-      - name: 缓存依赖
-        uses: actions/cache@v3
-        with:
-          path: |
-            ${{ env.WORKDIR }}/openwrt/staging_dir
-            ${{ env.WORKDIR }}/openwrt/build_dir
-            ${{ env.WORKDIR }}/openwrt/dl
-          key: openwrt-${{ matrix.device }}-${{ hashFiles('config/**/*.config') }}
-          restore-keys: |
-            openwrt-${{ matrix.device }}-
+    - name: Clone Source Code
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-      - name: 克隆源码
-        run: |
-          mkdir -p $WORKDIR
-          cd $WORKDIR
-          git clone $REPO_URL -b $REPO_BRANCH openwrt
-          ln -sf $WORKDIR/openwrt $GITHUB_WORKSPACE/openwrt
+    - name: Update & Install Feeds
+      run: |
+        cd openwrt
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
 
-      - name: 更新 feeds
-        run: |
+    - name: Build Firmware
+      id: build
+      run: |
+        IFS=',' read -ra DEVICES <<< "${{ github.event.inputs.devices }}"
+        results=""
+        
+        for device in "${DEVICES[@]}"; do
+          device_start_time=$(date '+%Y-%m-%d %H:%M:%S')
+          echo "开始编译 ${device} 固件..."
+          
+          # 设置设备特定的配置文件
+          CONFIG_FILE="./config/21.02/immortalwrtARM/${device}/${device}-mtwifi-cfg.config"
+          DIY_P1_SH="./diy/21.02/immortalwrtARM/${device}/diy-part1.sh"
+          DIY_P2_SH="./diy/21.02/immortalwrtARM/${device}/diy-part2.sh"
+          
+          # 加载配置
           cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-
-      - name: 加载配置
-        run: |
-          [ -e files ] && cp -r files openwrt/files
-          cp config/21.02/immortalwrtARM/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config openwrt/.config
-          cd openwrt
-          bash $GITHUB_WORKSPACE/diy/21.02/immortalwrtARM/${{ matrix.device }}/diy-part2.sh
-
-      - name: 下载依赖
-        run: |
-          cd openwrt
+          [ -e $CONFIG_FILE ] && cp $CONFIG_FILE .config
+          [ -e $DIY_P1_SH ] && chmod +x $DIY_P1_SH && $GITHUB_WORKSPACE/$DIY_P1_SH
+          [ -e $DIY_P2_SH ] && chmod +x $DIY_P2_SH && $GITHUB_WORKSPACE/$DIY_P2_SH
+          
+          # 编译固件
           make defconfig
           make download -j8
-          find dl -size -1024c -exec ls -l {} \;
-          find dl -size -1024c -exec rm -f {} \;
-
-      - name: 编译固件
-        id: compile
-        run: |
-          cd openwrt
-          echo -e "$(nproc) thread compile"
           make -j$(nproc) || make -j1 V=s
-          echo "status=success" >> $GITHUB_OUTPUT
-          grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-          echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-          echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-      - name: 整理文件
-        if: steps.compile.outputs.status == 'success'
-        run: |
-          cd openwrt/bin/targets/*/*
-          rm -rf packages
-          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+          # 判断编译是否成功，成功则记录固件链接，失败则记录失败时间
+          if [ $? -eq 0 ]; then
+            status="success"
+            device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
+            firmware_link="https://github.com/${{ github.repository }}/releases/download/latest/${device}-firmware.bin"
+            results="${results}${device}|${status}|${device_start_time}|${device_end_time}|${firmware_link}\n"
+          else
+            status="failed"
+            device_end_time=$(date '+%Y-%m-%d %H:%M:%S')
+            results="${results}${device}|${status}|${device_start_time}|${device_end_time}|\n"
+          fi
+          
+          cd $GITHUB_WORKSPACE
+        done
+        
+        echo "BUILD_RESULTS<<EOF" >> $GITHUB_ENV
+        echo -e "$results" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
 
-      - name: 发布固件
-        uses: softprops/action-gh-release@v1
-        if: steps.compile.outputs.status == 'success'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ matrix.device }}_${{ env.FILE_DATE }}
-          files: ${{ env.FIRMWARE }}/*
-          generate_release_notes: true
-          body: |
-            🎉 OpenWrt 固件发布
-            
-            📱 设备: ${{ matrix.device }}
-            ⏰ 编译时间: ${{ env.FILE_DATE }}
-            🔗 源码: ${{ env.REPO_URL }}
-            🌿 分支: ${{ env.REPO_BRANCH }}
+    - name: Send Build Notification
+      if: always()
+      run: |
+        # 生成通知内容
+        notification="🔄 OpenWrt 固件编译通知\n"
+        notification+="开始时间: ${{ env.START_TIME }}\n\n"
+        notification+="📋 编译环境信息：\n"
+        notification+="• 运行环境: Ubuntu 22.04\n"
+        notification+="• 源码分支: ${REPO_BRANCH}\n"
+        notification+="• 源码仓库: immortalwrt-mt798x\n\n"
+        
+        success_count=0
+        fail_count=0
+        
+        while IFS='|' read -r device status start_time end_time link; do
+          if [ "$status" == "success" ]; then
+            notification+="✅ ${device}\n"
+            notification+="⏱️ 编译完成于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n"
+            if [ -n "$link" ]; then
+              notification+="📥 <copy data-clipboard-text=\"$link\">复制下载链接</copy>\n\n"
+            fi
+            ((success_count++))
+          else
+            notification+="❌ ${device}\n"
+            notification+="⏱️ 编译失败于: $(date -d "$end_time" '+%m月%d日 %H:%M')\n\n"
+            ((fail_count++))
+          fi
+        done <<< "${{ env.BUILD_RESULTS }}"
+        
+        total=$((success_count + fail_count))
+        duration=$(( $(date -d "$end_time" +%s) - $(date -d "${{ env.START_TIME }}" +%s) ))
+        hours=$((duration / 3600))
+        minutes=$(( (duration % 3600) / 60 ))
+        
+        notification+="📊 编译结果统计\n"
+        notification+="• 共 ${total} 个固件\n"
+        notification+="• ${success_count} 个成功\n"
+        notification+="• ${fail_count} 个失败\n"
+        notification+="⌛ 总耗时: ${hours}h${minutes}m\n"
+        
+        # 发送通知
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"appToken\": \"${{ env.WXPUSHER_TOKEN }}\",
+            \"content\": \"$notification\",
+            \"summary\": \"OpenWrt 固件编译完成\",
+            \"contentType\": 2,
+            \"uids\": [\"${{ env.WXPUSHER_UIDS }}\"]
+          }" \
+          https://wxpusher.zjiecode.com/api/send/message
 
-      - name: 发送通知
-        if: always()
-        uses: wxpusher/wxpusher-action@main
-        with:
-          appToken: ${{ secrets.WXPUSHER_APPTOKEN }}
-          uids: ${{ secrets.WXPUSHER_UIDS }}
-          content: |
-            设备: ${{ matrix.device }}
-            状态: ${{ steps.compile.outputs.status == 'success' && '✅ 成功' || '❌ 失败' }}
-            时间: ${{ env.FILE_DATE }}
-            ${{ steps.compile.outputs.status == 'success' && format('下载: https://github.com/{0}/releases/tag/{1}_{2}', github.repository, matrix.device, env.FILE_DATE) || '' }}
+    - name: Delete Old Releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  cleanup:
-    needs: build
-    runs-on: ubuntu-22.04
-    steps:
-      - name: 清理旧版本
-        uses: dev-drprasad/delete-older-releases@v0.2.1
-        with:
-          keep_latest: 3
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Delete Workflow Runs
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2 
