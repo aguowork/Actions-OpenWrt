@@ -235,11 +235,11 @@ jobs:
         
         # 构建JSON数据
         JSON_DATA="{
-          \"appToken\": \"AT_ryo91ZPH31fKLonPBFN5UwlxTkPl7Vf0\",
+          \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
           \"content\": \"${ESCAPED_NOTIFICATION}\",
           \"summary\": \"OpenWrt-${{ matrix.device }} 固件编译已完成\",
           \"contentType\": 2,
-          \"uids\": [\"UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k\"]
+          \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
         }"
         
         # 发送通知
