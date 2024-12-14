@@ -50,9 +50,7 @@ jobs:
             diy_p1_sh: ./diy/21.02/immortalwrtARM/360T7/diy-part1.sh
             diy_p2_sh: ./diy/21.02/immortalwrtARM/360T7/diy-part2.sh
     
-    if: >
-      github.event.inputs.device_selection == '全部' ||
-      github.event.inputs.device_selection == matrix.device
+    if: ${{ github.event.inputs.device_selection == '全部' || github.event.inputs.device_selection == matrix.device }}
 
     steps:
     - name: Checkout  # 检出代码
