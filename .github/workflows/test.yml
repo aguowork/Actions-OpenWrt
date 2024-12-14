@@ -5,6 +5,8 @@ on:
 
 env:
   TZ: Asia/Shanghai
+  WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
+  WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
 
 jobs:
   test-notification:
@@ -24,10 +26,18 @@ jobs:
     - name: 发送编译通知
       if: always()
       run: |
-        if [ -z "${{ secrets.WXPUSHER_TOKEN }}" ] || [ -z "${{ secrets.WXPUSHER_UIDS }}" ]; then
+        # 添加调试信息
+        echo "DEBUG: 打印环境变量"
+        echo "WXPUSHER_TOKEN 长度: ${#WXPUSHER_TOKEN}"
+        echo "WXPUSHER_UIDS 长度: ${#WXPUSHER_UIDS}"
+        
+        # 使用环境变量而不是直接使用 secrets
+        if [ -z "${WXPUSHER_TOKEN}" ] || [ -z "${WXPUSHER_UIDS}" ]; then
           echo "警告：WXPusher 配置未设置，跳过通知发送"
           exit 0
         fi
+        
+        echo "DEBUG: 配置验证通过，开始准备通知内容"
         
         notification="🔄 OpenWrt 固件编译通知\n"
         notification+="开始时间: ${{ env.START_TIME }}\n\n"
@@ -61,13 +71,14 @@ jobs:
         notification+="• ${fail_count} 个失败\n"
         notification+="⌛ 总耗时: 1h30m (测试数据)\n"
         
-        curl -X POST \
+        echo "DEBUG: 开始发送通知"
+        curl -v -X POST \
           -H "Content-Type: application/json" \
           -d "{
-            \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
+            \"appToken\": \"${WXPUSHER_TOKEN}\",
             \"content\": \"$notification\",
             \"summary\": \"OpenWrt 固件编译完成\",
             \"contentType\": 2,
-            \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
+            \"uids\": [\"${WXPUSHER_UIDS}\"]
           }" \
           https://wxpusher.zjiecode.com/api/send/message
