@@ -44,7 +44,7 @@ jobs:
       run: |
         echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
-    - name: Check if should build
+    - name: Check if should build # 检查是否选择编译的设备
       id: check
       run: |
         if [[ "${{ github.event.inputs.device_selection }}" == "全部" || \
@@ -84,7 +84,7 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Set device-specific variables # 设置设备特定变量
+    - name: Set device-specific variables # 设置设备配置文件和自定义脚本变量
       run: |
         CONFIG_BASE_PATH="./config/21.02/immortalwrtARM"
         DIY_BASE_PATH="./diy/21.02/immortalwrtARM"
