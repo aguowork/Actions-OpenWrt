@@ -234,11 +234,9 @@ jobs:
            [ "${{ steps.tag.outputs.status }}" = "success" ]; then
           BUILD_STATUS="✅"
           STATUS_MSG="编译完成于"
-          # 构建复制链接的HTML
-          COPY_SCRIPT="onclick='navigator.clipboard.writeText(this.dataset.link).then(() => {this.textContent=\"复制成功\";setTimeout(() => {this.textContent=\"复制下载链接\";}, 1000);})'"
           
-          FIRMWARE_LINE="<li>📥 升级固件：<a href='javascript:void(0);' data-link=\"${{ steps.firmware.outputs.download_url }}\" ${COPY_SCRIPT}>复制下载链接</a></li>"
-          FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：<a href='javascript:void(0);' data-link=\"${{ steps.firmware.outputs.all_firmware_url }}\" ${COPY_SCRIPT}>复制下载链接</a></li>"
+          FIRMWARE_LINE="<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
+          FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
         else
           BUILD_STATUS="❌"
           STATUS_MSG="编译失败于"
