@@ -22,8 +22,8 @@ on:
 
 # 环境变量设置
 env:
-  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git  # 源码仓库地址
-  REPO_BRANCH: openwrt-21.02  # 源码分支
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-23.05.git  # 源码仓库地址
+  REPO_BRANCH: openwrt-23.05  # 源码分支
   FEEDS_CONF: feeds.conf.default  # feeds 配置文件
   UPLOAD_BIN_DIR: false  # 是否上传整个 bin 目录
   UPLOAD_FIRMWARE: true  # 是否上传固件
@@ -74,8 +74,8 @@ jobs:
 
     - name: Set device-specific variables # 设置设备配置文件和自定义脚本变量
       run: |
-        CONFIG_BASE_PATH="./config/21.02/immortalwrtARM"
-        DIY_BASE_PATH="./diy/21.02/immortalwrtARM"
+        CONFIG_BASE_PATH="./config/23.05/immortalwrtARM"
+        DIY_BASE_PATH="./diy/23.05/immortalwrtARM"
         echo "CONFIG_FILE=${CONFIG_BASE_PATH}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
         echo "DIY_P1_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
         echo "DIY_P2_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
@@ -95,7 +95,7 @@ jobs:
 
     - name: Load custom configuration  # 加载自定义配置
       run: |
-        [ -e files/21.02 ] && mkdir -p openwrt/files && mv files/21.02/* openwrt/files
+        [ -e files/23.05 ] && mkdir -p openwrt/files && mv files/23.05/* openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
@@ -152,7 +152,7 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device }}" >> $GITHUB_OUTPUT
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2305")-${{ matrix.device }}" >> $GITHUB_OUTPUT
         touch release.txt
         [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
