@@ -39,10 +39,11 @@ jobs:
         device: ${{ github.event.inputs.device_selection == '全部' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
 
     steps:
-    - name: Record workflow start time  # 记录工作流开始时间
+    - name: Record workflow start time  # 记录工作流开始时间和系统信息
       id: workflow_time
       run: |
         echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+        echo "system_info=$(lsb_release -ds | tr -d '"')" >> $GITHUB_OUTPUT
 
     - name: Checkout  # 检出代码
       uses: actions/checkout@main
@@ -74,8 +75,8 @@ jobs:
 
     - name: Set device-specific variables # 设置设备配置文件和自定义脚本变量
       run: |
-        CONFIG_BASE_PATH="./config/21.02/immortalwrtARM"
-        DIY_BASE_PATH="./diy/21.02/immortalwrtARM"
+        CONFIG_BASE_PATH="./config/23.05/immortalwrtARM"
+        DIY_BASE_PATH="./diy/23.05/immortalwrtARM"
         echo "CONFIG_FILE=${CONFIG_BASE_PATH}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
         echo "DIY_P1_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
         echo "DIY_P2_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
@@ -95,7 +96,7 @@ jobs:
 
     - name: Load custom configuration  # 加载自定义配置
       run: |
-        [ -e files/21.02 ] && mkdir -p openwrt/files && mv files/21.02/* openwrt/files
+        [ -e files/23.05 ] && mkdir -p openwrt/files && mv files/23.05/* openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
@@ -145,7 +146,7 @@ jobs:
       id: tag
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device }}" >> $GITHUB_OUTPUT
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2305")-${{ matrix.device }}" >> $GITHUB_OUTPUT
         touch release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -167,9 +168,10 @@ jobs:
         allowUpdates: true
         replacesArtifacts: true
 
-    - name: Get firmware download url  # 获取固件Release下载地址、Release Tag页面、系统版本信息
+    - name: Get firmware download url  # 获取固件Release下载地址、Release Tag页面
       id: firmware
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      # 检查是否上传Release，如果不上传则不获取下载链接
+      if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
       run: |
         cd ${{ env.FIRMWARE }}
         # 获取升级固件下载地址（Release）
@@ -177,8 +179,6 @@ jobs:
         echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> $GITHUB_OUTPUT
         # 获取完整固件下载地址（Release Tag页面）
         echo "all_firmware_url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.release_tag }}" >> $GITHUB_OUTPUT
-        # 获取系统版本信息
-        echo "system_info=$(lsb_release -ds | tr -d '"')" >> $GITHUB_OUTPUT
 
     - name: Send build notification  # 发送编译完成通知
       if: always()
@@ -194,14 +194,18 @@ jobs:
         MINUTES=$(( (DURATION % 3600) / 60 ))
         
         # 检查编译状态
-        if [ "${{ steps.compile.outputs.status }}" = "success" ] && \
-           [ "${{ steps.organize.outputs.status }}" = "success" ] && \
-           [ "${{ steps.tag.outputs.status }}" = "success" ]; then
+        if [ "${{ steps.compile.outputs.status }}" = "success" ] && [ "${{ steps.organize.outputs.status }}" = "success" ]; then
           BUILD_STATUS="✅"
           STATUS_MSG="编译完成于"
           
-          FIRMWARE_LINE="<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
-          FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
+          # 检查是否成功获取下载链接
+          if [ "${{ steps.firmware.outputs.download_url }}" != "" ]; then
+            FIRMWARE_LINE="<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
+            FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
+          else
+            FIRMWARE_LINE="<li>📥 升级固件：Release未发布</li>"
+            FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：Release未发布</li>"
+          fi
         else
           BUILD_STATUS="❌"
           STATUS_MSG="编译失败于"
@@ -213,7 +217,7 @@ jobs:
         
         <h3>📋 编译环境信息：</h3>
         <ul>
-          <li>运行环境: ${{ steps.firmware.outputs.system_info }}</li>
+          <li>运行环境: ${{ steps.workflow_time.outputs.system_info }}</li>
           <li>源码分支: ${REPO_BRANCH}</li>
           <li>源码仓库: $(basename ${REPO_URL} .git)</li>
           <li>开始时间: ${START_TIME}</li>
