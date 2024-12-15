@@ -149,7 +149,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}_${{ matrix.device }}
+        name: OpenWrt_${{ matrix.device }}_bin_${{ env.FILE_DATE }}
         path: openwrt/bin
 
     - name: Organize files  # 整理文件
@@ -165,7 +165,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}_${{ matrix.device }}
+        name: OpenWrt_${{ matrix.device }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
     - name: Generate release tag  # 生成发布标签
@@ -188,7 +188,7 @@ jobs:
         allowUpdates: true
         replacesArtifacts: true
 
-    - name: Get firmware download url  # 获取固件下载地址、系统版本号
+    - name: Get firmware download url  # 获取固件Release下载地址、Release Tag页面、系统版本信息
       id: firmware
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
@@ -228,7 +228,7 @@ jobs:
         HOURS=$((DURATION / 3600))
         MINUTES=$(( (DURATION % 3600) / 60 ))
         
-        # 检查编译状态和获取失败原因
+        # 检查编译状态
         if [ "${{ steps.compile.outputs.status }}" = "success" ] && \
            [ "${{ steps.organize.outputs.status }}" = "success" ] && \
            [ "${{ steps.tag.outputs.status }}" = "success" ]; then
@@ -241,16 +241,6 @@ jobs:
           BUILD_STATUS="❌"
           STATUS_MSG="编译失败于"
           FIRMWARE_LINE=""
-          # 添加失败原因
-          if [ "${{ steps.compile.conclusion }}" = "failure" ]; then
-            FAILURE_REASON="编译失败"
-          elif [ "${{ steps.organize.conclusion }}" = "failure" ]; then
-            FAILURE_REASON="文件整理失败"
-          elif [ "${{ steps.tag.conclusion }}" = "failure" ]; then
-            FAILURE_REASON="发布失败"
-          else
-            FAILURE_REASON="未知原因"
-          fi
         fi
         
         # 构建通知内容
@@ -269,7 +259,6 @@ jobs:
           <li>⏱️ ${STATUS_MSG}: $(date '+%m月%d日 %H:%M')</li>
           ${FIRMWARE_LINE}
           <li>⌛ 总耗时: ${HOURS}h${MINUTES}m</li>
-          ${FAILURE_REASON:+<li>❗ 失败原因: ${FAILURE_REASON}</li>}
         </ul>"
         
         # 转义JSON特殊字符
