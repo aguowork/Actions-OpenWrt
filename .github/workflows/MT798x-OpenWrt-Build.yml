@@ -129,13 +129,9 @@ jobs:
     - name: Compile the firmware  # 编译固件
       id: compile
       run: |
-        # 记录开始时间
-        echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
-        # 记录结束时间
-        echo "end_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -201,26 +197,12 @@ jobs:
         # 获取系统版本信息
         echo "system_info=$(lsb_release -ds | tr -d '"')" >> $GITHUB_OUTPUT
 
-    - name: Delete workflow runs  # 删除旧的工作流运行记录
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
-
-    - name: Remove old Releases  # 删除旧的发布
-      uses: dev-drprasad/delete-older-releases@master
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      with:
-        keep_latest: 3
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     - name: Send build notification  # 发送编译完成通知
       if: always()
       run: |
-        # 获取时间信息
+        # 获取开始时间  
         START_TIME="${{ steps.workflow_time.outputs.start_time }}"
+        # 获取当前时间为结束时间
         END_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
         
         # 计算耗时
@@ -256,7 +238,7 @@ jobs:
         
         <h3>${BUILD_STATUS} ${{ matrix.device }}</h3>
         <ul>
-          <li>⏱️ ${STATUS_MSG}: $(date '+%m月%d日 %H:%M')</li>
+          <li>⏱️ ${STATUS_MSG}: $(date '+%Y-%m-%d %H:%M:%S')</li>
           ${FIRMWARE_LINE}
           <li>⌛ 总耗时: ${HOURS}h${MINUTES}m</li>
         </ul>"
@@ -282,3 +264,18 @@ jobs:
           -H "Content-Type: application/json" \
           -d "${JSON_DATA}" \
           https://wxpusher.zjiecode.com/api/send/message
+
+    - name: Delete workflow runs  # 删除旧的工作流运行记录
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+
+    - name: Remove old Releases  # 删除旧的发布
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
