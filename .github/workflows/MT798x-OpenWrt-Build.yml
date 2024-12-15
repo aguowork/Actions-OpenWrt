@@ -37,8 +37,6 @@ jobs:
       fail-fast: false
       matrix:
         device: [AX6000, WR30U, 360T7]
-        config_base_path: ./config/21.02/immortalwrtARM
-        diy_base_path: ./diy/21.02/immortalwrtARM
 
     steps:
     - name: Record workflow start time  # 记录工作流开始时间
@@ -86,11 +84,13 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Set device-specific variables # 设置设备特定变量，详细的地址是 $GITHUB_WORKSPACE/openwrt/.config
+    - name: Set device-specific variables # 设置设备特定变量
       run: |
-        echo "CONFIG_FILE=${{ matrix.config_base_path }}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
-        echo "DIY_P1_SH=${{ matrix.diy_base_path }}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
-        echo "DIY_P2_SH=${{ matrix.diy_base_path }}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
+        CONFIG_BASE_PATH="./config/21.02/immortalwrtARM"
+        DIY_BASE_PATH="./diy/21.02/immortalwrtARM"
+        echo "CONFIG_FILE=${CONFIG_BASE_PATH}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
+        echo "DIY_P1_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
+        echo "DIY_P2_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
 
     - name: Load custom feeds  # 加载自定义 feeds
       run: |
