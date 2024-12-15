@@ -2,7 +2,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # MT798x 系列路由器固件自动编译脚本
 
-name: MT798x OpenWrt 2305 Build
+name: MT798x OpenWrt 2102 Build
 
 # 触发工作流程的事件
 on:
@@ -22,8 +22,8 @@ on:
 
 # 环境变量设置
 env:
-  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-23.05.git  # 源码仓库地址
-  REPO_BRANCH: openwrt-23.05  # 源码分支
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x.git  # 源码仓库地址
+  REPO_BRANCH: openwrt-21.02  # 源码分支
   FEEDS_CONF: feeds.conf.default  # feeds 配置文件
   UPLOAD_BIN_DIR: false  # 是否上传整个 bin 目录
   UPLOAD_FIRMWARE: true  # 是否上传固件
@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: [AX6000, WR30U, 360T7]
+        device: ${{ github.event.inputs.device_selection == '全部' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
 
     steps:
     - name: Record workflow start time  # 记录工作流开始时间
@@ -44,22 +44,10 @@ jobs:
       run: |
         echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
-    - name: Check if should build # 检查是否选择编译的设备
-      id: check
-      run: |
-        if [[ "${{ github.event.inputs.device_selection }}" == "全部" || \
-              "${{ github.event.inputs.device_selection }}" == "${{ matrix.device }}" ]]; then
-          echo "should_build=true" >> $GITHUB_OUTPUT
-        else
-          echo "should_build=false" >> $GITHUB_OUTPUT
-        fi
-
     - name: Checkout  # 检出代码
-      if: steps.check.outputs.should_build == 'true'
       uses: actions/checkout@main
 
     - name: Initialization environment  # 初始化编译环境
-      if: steps.check.outputs.should_build == 'true'
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -86,8 +74,8 @@ jobs:
 
     - name: Set device-specific variables # 设置设备配置文件和自定义脚本变量
       run: |
-        CONFIG_BASE_PATH="./config/23.05/immortalwrtARM"
-        DIY_BASE_PATH="./diy/23.05/immortalwrtARM"
+        CONFIG_BASE_PATH="./config/21.02/immortalwrtARM"
+        DIY_BASE_PATH="./diy/21.02/immortalwrtARM"
         echo "CONFIG_FILE=${CONFIG_BASE_PATH}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
         echo "DIY_P1_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
         echo "DIY_P2_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
@@ -107,7 +95,7 @@ jobs:
 
     - name: Load custom configuration  # 加载自定义配置
       run: |
-        [ -e files/23.05 ] && mkdir -p openwrt/files && mv files/23.05/* openwrt/files
+        [ -e files/21.02 ] && mkdir -p openwrt/files && mv files/21.02/* openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
@@ -164,7 +152,7 @@ jobs:
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2305")-${{ matrix.device }}" >> $GITHUB_OUTPUT
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2102")-${{ matrix.device }}" >> $GITHUB_OUTPUT
         touch release.txt
         [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
         echo "status=success" >> $GITHUB_OUTPUT
