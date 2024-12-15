@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: ${{ github.event.inputs.device_selection == '全���' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
+        device: ${{ github.event.inputs.device_selection == '全部' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
 
     steps:
     - name: Record workflow start time  # 记录工作流开始时间和系统信息
