@@ -2,7 +2,7 @@
 # https://github.com/P3TERX/Actions-OpenWrt
 # MT798x 系列路由器固件自动编译脚本
 
-name: MT798x OpenWrt 2102 Build
+name: MT798x OpenWrt 2305 Build
 
 # 触发工作流程的事件
 on:
