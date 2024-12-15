@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: ${{ github.event.inputs.device_selection == '全部' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
+        device: ${{ github.event.inputs.device_selection == '全���' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
 
     steps:
     - name: Record workflow start time  # 记录工作流开始时间和系统信息
@@ -52,17 +52,13 @@ jobs:
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 清理系统空间
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
-        # 更新并安装编译所需软件包
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
-        # 设置时区
         sudo timedatectl set-timezone "$TZ"
-        # 创建工作目录
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
@@ -170,51 +166,59 @@ jobs:
 
     - name: Get firmware download url  # 获取固件Release下载地址、Release Tag页面
       id: firmware
-      # 检查是否上传Release，如果不上传则不获取下载链接
       if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
       run: |
         cd ${{ env.FIRMWARE }}
-        # 获取升级固件下载地址（Release）
         FIRMWARE_PATH=$(ls *-squashfs-sysupgrade.bin)
         echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> $GITHUB_OUTPUT
-        # 获取完整固件下载地址（Release Tag页面）
         echo "all_firmware_url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.release_tag }}" >> $GITHUB_OUTPUT
 
     - name: Send build notification  # 发送编译完成通知
       if: always()
       run: |
-        # 获取开始时间  
+        # 定义函数
+        format_time() {
+          local duration=$1
+          local hours=$((duration / 3600))
+          local minutes=$(((duration % 3600) / 60))
+          echo "${hours}h${minutes}m"
+        }
+
+        generate_firmware_links() {
+          if [ "${{ steps.firmware.outputs.download_url }}" != "" ]; then
+            echo "<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
+            echo "<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
+          else
+            echo "<li>📥 升级固件：Release未发布</li>"
+            echo "<li>📥 完整固件：Release未发布</li>"
+          fi
+        }
+
+        escape_json() {
+          echo "$1" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g'
+        }
+
+        # 计算编译时间
         START_TIME="${{ steps.workflow_time.outputs.start_time }}"
-        # 获取当前时间为结束时间
         END_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
-        
-        # 计算耗时
         DURATION=$(( $(date -d "$END_TIME" +%s) - $(date -d "$START_TIME" +%s) ))
-        HOURS=$((DURATION / 3600))
-        MINUTES=$(( (DURATION % 3600) / 60 ))
-        
-        # 检查编译状态
+        BUILD_DURATION=$(format_time $DURATION)
+
+        # 设置编译状态
         if [ "${{ steps.compile.outputs.status }}" = "success" ] && [ "${{ steps.organize.outputs.status }}" = "success" ]; then
           BUILD_STATUS="✅"
           STATUS_MSG="编译完成于"
-          
-          # 检查是否成功获取下载链接
-          if [ "${{ steps.firmware.outputs.download_url }}" != "" ]; then
-            FIRMWARE_LINE="<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
-            FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
-          else
-            FIRMWARE_LINE="<li>📥 升级固件：Release未发布</li>"
-            FIRMWARE_LINE="${FIRMWARE_LINE}<li>📥 完整固件：Release未发布</li>"
-          fi
+          FIRMWARE_LINE="$(generate_firmware_links)"
         else
-          BUILD_STATUS="❌"
+          BUILD_STATUS="❌" 
           STATUS_MSG="编译失败于"
           FIRMWARE_LINE=""
         fi
-        
+
         # 构建通知内容
-        NOTIFICATION="<h2>🔄 OpenWrt 固件编译通知</h2>
-        
+        read -r -d '' NOTIFICATION << EOM
+        <h2>🔄 OpenWrt 固件编译通知</h2>
+
         <h3>📋 编译环境信息：</h3>
         <ul>
           <li>运行环境: ${{ steps.workflow_time.outputs.system_info }}</li>
@@ -222,22 +226,17 @@ jobs:
           <li>源码仓库: $(basename ${REPO_URL} .git)</li>
           <li>开始时间: ${START_TIME}</li>
         </ul>
-        
+
         <h3>${BUILD_STATUS} ${{ matrix.device }}</h3>
         <ul>
-          <li>⏱️ ${STATUS_MSG}: $(date '+%Y-%m-%d %H:%M:%S')</li>
+          <li>⏱️ ${STATUS_MSG}: ${END_TIME}</li>
           ${FIRMWARE_LINE}
-          <li>⌛ 总耗时: ${HOURS}h${MINUTES}m</li>
-        </ul>"
-        
-        # 转义JSON特殊字符
-        escape_json() {
-          echo "$1" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g'
-        }
-        
+          <li>⌛ 总耗时: ${BUILD_DURATION}</li>
+        </ul>
+        EOM
+
+        # 发送通知
         ESCAPED_NOTIFICATION=$(escape_json "${NOTIFICATION}")
-        
-        # 构建JSON数据
         JSON_DATA="{
           \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
           \"content\": \"${ESCAPED_NOTIFICATION}\",
@@ -245,8 +244,7 @@ jobs:
           \"contentType\": 2,
           \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
         }"
-        
-        # 发送通知
+
         curl -X POST \
           -H "Content-Type: application/json" \
           -d "${JSON_DATA}" \
