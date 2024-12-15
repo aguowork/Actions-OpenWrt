@@ -1,0 +1,38 @@
+name: Test Notification
+
+on:
+  workflow_dispatch:  # 允许手动触发工作流
+
+jobs:
+  test-notification:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Send test notification  # 发送测试通知
+      run: |
+        # 定义函数
+        escape_json() {
+          echo "$1" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g'
+        }
+
+        # 构建测试通知内容
+        NOTIFICATION=$(cat << EOM
+        <h2>测试通知</h2>
+        <p>这是一个测试通知，用于验证推送功能是否正常工作。</p>
+        EOM
+        )
+
+        # 发送通知
+        ESCAPED_NOTIFICATION=$(escape_json "${NOTIFICATION}")
+        JSON_DATA="{
+          \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
+          \"content\": \"${ESCAPED_NOTIFICATION}\",
+          \"summary\": \"测试通知\",
+          \"contentType\": 2,
+          \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
+        }"
+
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "${JSON_DATA}" \
+          https://wxpusher.zjiecode.com/api/send/message 
