@@ -122,7 +122,7 @@ jobs:
       if: (!cancelled())
       run: df -hT
 
-    - name: Upload bin directory  # 上传 bin 目录
+    - name: Upload bin directory  # 上��� bin 目录
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
@@ -216,7 +216,7 @@ jobs:
         fi
 
         # 构建通知内容
-        read -r -d '' NOTIFICATION << EOM
+        NOTIFICATION=$(cat << EOM
         <h2>🔄 OpenWrt 固件编译通知</h2>
 
         <h3>📋 编译环境信息：</h3>
@@ -234,6 +234,7 @@ jobs:
           <li>⌛ 总耗时: ${BUILD_DURATION}</li>
         </ul>
         EOM
+        )
 
         # 发送通知
         ESCAPED_NOTIFICATION=$(escape_json "${NOTIFICATION}")
