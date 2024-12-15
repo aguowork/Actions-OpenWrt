@@ -36,20 +36,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - device: AX6000
-            config_file: ./config/21.02/immortalwrtARM/AX6000/AX6000-mtwifi-cfg.config
-            diy_p1_sh: ./diy/21.02/immortalwrtARM/AX6000/diy-part1.sh
-            diy_p2_sh: ./diy/21.02/immortalwrtARM/AX6000/diy-part2.sh
-          - device: WR30U
-            config_file: ./config/21.02/immortalwrtARM/WR30U/WR30U-mtwifi-cfg.config
-            diy_p1_sh: ./diy/21.02/immortalwrtARM/WR30U/diy-part1.sh
-            diy_p2_sh: ./diy/21.02/immortalwrtARM/WR30U/diy-part2.sh
-          - device: 360T7
-            config_file: ./config/21.02/immortalwrtARM/360T7/360T7-mtwifi-cfg.config
-            diy_p1_sh: ./diy/21.02/immortalwrtARM/360T7/diy-part1.sh
-            diy_p2_sh: ./diy/21.02/immortalwrtARM/360T7/diy-part2.sh
-    
+        device: [AX6000, WR30U, 360T7]
+        config_base_path: ./config/21.02/immortalwrtARM
+        diy_base_path: ./diy/21.02/immortalwrtARM
+
     steps:
     - name: Record workflow start time  # 记录工作流开始时间
       id: workflow_time
@@ -96,12 +86,18 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
+    - name: Set device-specific variables # 设置设备特定变量，详细的地址是 $GITHUB_WORKSPACE/openwrt/.config
+      run: |
+        echo "CONFIG_FILE=${{ matrix.config_base_path }}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
+        echo "DIY_P1_SH=${{ matrix.diy_base_path }}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
+        echo "DIY_P2_SH=${{ matrix.diy_base_path }}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
+
     - name: Load custom feeds  # 加载自定义 feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x ${{ matrix.diy_p1_sh }}
+        chmod +x $DIY_P1_SH
         cd openwrt
-        $GITHUB_WORKSPACE/${{ matrix.diy_p1_sh }}
+        $GITHUB_WORKSPACE/$DIY_P1_SH
 
     - name: Update feeds  # 更新 feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -112,10 +108,10 @@ jobs:
     - name: Load custom configuration  # 加载自定义配置
       run: |
         [ -e files/21.02 ] && mkdir -p openwrt/files && mv files/21.02/* openwrt/files
-        [ -e ${{ matrix.config_file }} ] && mv ${{ matrix.config_file }} openwrt/.config
-        chmod +x ${{ matrix.diy_p2_sh }}
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
         cd openwrt
-        $GITHUB_WORKSPACE/${{ matrix.diy_p2_sh }}
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
     - name: Download package  # 下载软件包
       id: package
