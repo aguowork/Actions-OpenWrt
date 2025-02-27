@@ -28,3 +28,10 @@ echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >
 
 # Add luci-app-adguardhome
 git clone https://github.com/kongfl888/luci-app-adguardhome.git package/luci-app-adguardhome
+
+# add Wiwiz
+git clone https://github.com/wiwizcom/WiFiPortal.git
+cp -r WiFiPortal/eqos-master-wiwiz package/
+cp -r WiFiPortal/wifidog-wiwiz package/
+cp -r WiFiPortal/dcc2-wiwiz package/
+rm -rf WiFiPortal
