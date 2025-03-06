@@ -43,7 +43,7 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 # 启用每30分钟检测是否断网切换无线脚本
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 # 无线中继预设配置
-echo '{"wifi":[{"name":"MERCURY_F30F","encryption":"psk2","password":"tanPeng888888","band":"2G","last_updated":"2021-01-03 18:33:40"},{"name":"802","encryption":"psk2","password":"qaz6688","band":"2G","last_updated":"2025-01-03 18:33:40"}],"autowifiranking":[{"autowifiname":["Name1","Name2"],"CQ_TIMES":0}]}' | jq . > files/www/wx/wifi-config.json
+echo '{"wifi":[{"name":"Hjx","encryption":"psk2","password":"HjxWpy2580","band":"2G","last_updated":"2021-01-03 18:33:40"}],"autowifiranking":[{"autowifiname":["Name1","Name2"],"CQ_TIMES":0}]}' | jq . > files/www/wx/wifi-config.json
 
 
 #重新启动日志
