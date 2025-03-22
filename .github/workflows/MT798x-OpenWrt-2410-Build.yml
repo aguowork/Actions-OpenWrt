@@ -1,0 +1,267 @@
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# MT798x 系列路由器固件自动编译脚本
+
+name: MT798x OpenWrt 2410 Build
+
+# 触发工作流程的事件
+on:
+  repository_dispatch:  # 允许通过 API 触发工作流程
+  workflow_dispatch:    # 允许手动触发工作流程
+    inputs:
+      device_selection:
+        description: '选择要编译的设备'
+        required: true
+        type: choice
+        options:
+          - 全部
+          - AX6000
+          - WR30U
+          - 360T7
+        default: '全部'
+
+# 环境变量设置
+env:
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-24.10.git  # 源码仓库地址
+  REPO_BRANCH: 2410  # 源码分支
+  FEEDS_CONF: feeds.conf.default  # feeds 配置文件
+  UPLOAD_BIN_DIR: false  # 是否上传整个 bin 目录
+  UPLOAD_FIRMWARE: true  # 是否上传固件
+  UPLOAD_RELEASE: true   # 是否发布 Release
+  TZ: Asia/Shanghai     # 时区设置
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 作为构建环境
+    strategy:
+      fail-fast: false
+      matrix:
+        device: ${{ github.event.inputs.device_selection == '全部' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
+
+    steps:
+    - name: Record workflow start time  # 记录工作流开始时间和系统信息
+      id: workflow_time
+      run: |
+        echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+        echo "system_info=$(lsb_release -ds | tr -d '"')" >> $GITHUB_OUTPUT
+
+    - name: Checkout  # 检出代码
+      uses: actions/checkout@main
+
+    - name: Initialization environment  # 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Clone source code  # 克隆源码
+      working-directory: /workdir
+      run: |
+        df -hT $PWD
+        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: Set device-specific variables # 设置设备配置文件和自定义脚本变量
+      run: |
+        CONFIG_BASE_PATH="./config/24.10/immortalwrtARM"
+        DIY_BASE_PATH="./diy/24.10/immortalwrtARM"
+        echo "CONFIG_FILE=${CONFIG_BASE_PATH}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
+        echo "DIY_P1_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
+        echo "DIY_P2_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
+
+    - name: Load custom feeds  # 加载自定义 feeds
+      run: |
+        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+
+    - name: Update feeds  # 更新 feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds  # 安装 feeds
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Load custom configuration  # 加载自定义配置
+      run: |
+        [ -e files/24.10 ] && mkdir -p openwrt/files && mv files/24.10/* openwrt/files
+        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+
+    - name: Download package  # 下载软件包
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: Compile the firmware  # 编译固件
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+
+    - name: Check space usage  # 检查空间使用情况
+      if: (!cancelled())
+      run: df -hT
+
+    - name: Upload bin directory  # 上传 bin 目录
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_${{ matrix.device }}_bin_${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: Organize files  # 整理文件
+      id: organize
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Generate release tag  # 生成发布标签
+      id: tag
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M-2305")-${{ matrix.device }}" >> $GITHUB_OUTPUT
+        touch release.txt
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware directory  # 上传固件目录
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_${{ matrix.device }}_${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: Upload firmware to release  # 上传固件到 Release
+      uses: ncipollo/release-action@v1
+      if: steps.tag.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        artifacts: "${{ env.FIRMWARE }}/*"
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ steps.tag.outputs.release_tag }}
+        bodyFile: "release.txt"
+        allowUpdates: true
+        replacesArtifacts: true
+
+    - name: Get firmware download url  # 获取固件Release下载地址、Release Tag页面
+      id: firmware
+      if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
+      run: |
+        cd ${{ env.FIRMWARE }}
+        FIRMWARE_PATH=$(ls *-squashfs-sysupgrade.bin)
+        echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> $GITHUB_OUTPUT
+        echo "all_firmware_url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.release_tag }}" >> $GITHUB_OUTPUT
+
+    - name: Send build notification  # 发送编译完成通知
+      if: always()
+      run: |
+        # 定义函数
+        format_time() {
+          local duration=$1
+          local hours=$((duration / 3600))
+          local minutes=$(((duration % 3600) / 60))
+          echo "${hours}h${minutes}m"
+        }
+
+        generate_firmware_links() {
+          if [ "${{ steps.firmware.outputs.download_url }}" != "" ]; then
+            echo "<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
+            echo "<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
+          else
+            echo "<li>📥 升级固件：Release未发布</li>"
+            echo "<li>📥 完整固件：Release未发布</li>"
+          fi
+        }
+
+        escape_json() {
+          echo "$1" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g'
+        }
+
+        # 计算编译时间
+        START_TIME="${{ steps.workflow_time.outputs.start_time }}"
+        END_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+        DURATION=$(( $(date -d "$END_TIME" +%s) - $(date -d "$START_TIME" +%s) ))
+        BUILD_DURATION=$(format_time $DURATION)
+
+        # 设置编译状态
+        if [ "${{ steps.compile.outputs.status }}" = "success" ] && [ "${{ steps.organize.outputs.status }}" = "success" ]; then
+          BUILD_STATUS="✅"
+          STATUS_MSG="编译完成于"
+          FIRMWARE_LINE="$(generate_firmware_links)"
+        else
+          BUILD_STATUS="❌" 
+          STATUS_MSG="编译失败于"
+          FIRMWARE_LINE=""
+        fi
+
+        # 构建通知内容
+        NOTIFICATION=$(cat << EOM
+        <h2>🔄 OpenWrt 固件编译通知</h2>
+
+        <h3>📋 编译环境信息：</h3>
+        <ul>
+          <li>运行环境: ${{ steps.workflow_time.outputs.system_info }}</li>
+          <li>源码分支: ${REPO_BRANCH}</li>
+          <li>源码仓库: $(basename ${REPO_URL} .git)</li>
+          <li>开始时间: ${START_TIME}</li>
+        </ul>
+
+        <h3>${BUILD_STATUS} ${{ matrix.device }}</h3>
+        <ul>
+          <li>⏱️ ${STATUS_MSG}: ${END_TIME}</li>
+          ${FIRMWARE_LINE}
+          <li>⌛ 总耗时: ${BUILD_DURATION}</li>
+        </ul>
+        EOM
+        )
+
+        # 发送通知
+        ESCAPED_NOTIFICATION=$(escape_json "${NOTIFICATION}")
+        JSON_DATA="{
+          \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
+          \"content\": \"${ESCAPED_NOTIFICATION}\",
+          \"summary\": \"OpenWrt-${{ matrix.device }} 固件编译已完成\",
+          \"contentType\": 2,
+          \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
+        }"
+
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "${JSON_DATA}" \
+          https://wxpusher.zjiecode.com/api/send/message
+
+    - name: Delete workflow runs  # 删除旧的工作流运行记录
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2
+
+    - name: Remove old Releases  # 删除旧的发布
+      uses: dev-drprasad/delete-older-releases@master
+      if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

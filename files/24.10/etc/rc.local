@@ -1,0 +1,7 @@
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
+#qdts~(if [ ! -x /etc/JiaoBen/qdts.sh ]; then chmod +x /etc/JiaoBen/qdts.sh; fi && /bin/bash /etc/JiaoBen/qdts.sh) &
+#wifi~chmod +x /www/cgi-bin/wx/integrated.sh
+exit 0
+
+

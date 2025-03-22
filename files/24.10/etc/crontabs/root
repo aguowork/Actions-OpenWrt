@@ -1,0 +1,7 @@
+#zjwifi*/11 * * * * if [ ! -x /www/cgi-bin/wx/integrated.sh ]; then chmod +x /www/cgi-bin/wx/integrated.sh; fi && export QUERY_STRING="action=autowifi"; /www/cgi-bin/wx/integrated.sh
+#wbzt*/9 * * * * if [ ! -x /etc/JiaoBen/wbzt.sh ]; then chmod +x /etc/JiaoBen/wbzt.sh; fi && /bin/bash /etc/JiaoBen/wbzt.sh # 每10分钟执行一次状态
+#* * * * * if [ ! -x /etc/JiaoBen/llts.sh ]; then chmod +x /etc/JiaoBen/llts.sh; fi && /bin/bash /etc/JiaoBen/llts.sh # 每1分钟执行一次 流量异常提醒
+#0 18 * * * if [ ! -x /etc/JiaoBen/fcjh.sh ]; then chmod +x /etc/JiaoBen/fcjh.sh; fi && /bin/bash /etc/JiaoBen/fcjh.sh # 每天下午6点执行一次 发财计划
+#0 22 * * * if [ ! -x /etc/JiaoBen/fcjh.sh ]; then chmod +x /etc/JiaoBen/fcjh.sh; fi && /bin/bash /etc/JiaoBen/fcjh.sh # 每天晚上22点执行一次 发财计划
+#cz*/10 * * * * /sbin/firstboot -y && /sbin/reboot
+
