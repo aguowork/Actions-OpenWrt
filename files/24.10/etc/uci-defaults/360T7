@@ -34,9 +34,9 @@ uci set wireless.wifinet2=wifi-iface
 uci set wireless.wifinet2.device='MT7981_1_1'
 uci set wireless.wifinet2.mode='sta'
 uci set wireless.wifinet2.network='wwan'
-uci set wireless.wifinet2.ssid='802'
+uci set wireless.wifinet2.ssid='Hjx'
 uci set wireless.wifinet2.encryption='psk2'
-uci set wireless.wifinet2.key='qaz6688@'
+uci set wireless.wifinet2.key='HjxWpy2580'
 uci commit wireless
 
 # /etc/config/zerotier
