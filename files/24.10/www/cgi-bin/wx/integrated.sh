@@ -96,146 +96,174 @@ push_message() {
 
 # 获取wifi接口状态
 get_wireless_status() {
-    # 获取无线网络状态数据（从ubus获取完整的无线配置信息）
-    local wifi_json_data=$(ubus call network.wireless status)
+    # 获取原始无线数据
+    local wx_wifi_json_data=$(ubus call network.wireless status)
     
-    # 使用jq处理JSON数据，提取所需信息并转换为TSV格式
-    local vars=$(echo "$wifi_json_data" | jq -r '{
-        "wireless": {
-            # 处理2.4GHz设备信息
-            "2g_device": (
-                # 遍历所有设备，选择2.4GHz频段的设备
-                to_entries[] | select(.value.config.band == "2g") | {
-                    "device": (.key // false),                    # 设备名称，如果不存在返回false
-                    "band": (.value.config.band // false),        # 频段(2g)
-                    "channel": (.value.config.channel // false),  # 信道
-                    "htmode": (.value.config.htmode // false),    # 无线模式(HE40等)
-                    # 从interfaces数组中选择AP模式的接口配置
-                    "ssid": (.value.interfaces[] | select(.config.mode == "ap") | .config.ssid // false),         # SSID名称
-                    "hidden": (.value.interfaces[] | select(.config.mode == "ap") | .config.hidden // false),     # 是否隐藏SSID
-                    "encryption": (.value.interfaces[] | select(.config.mode == "ap") | .config.encryption // false), # 加密方式
-                    "key": (.value.interfaces[] | select(.config.mode == "ap") | .config.key // false),          # 无线密码
-                    "disabled": (.value.interfaces[] | select(.config.mode == "ap") | .config.disabled // false)  # 是否禁用
+    # 步骤1：获取所有STA接口的网络名称并检查数量
+    local wx_sta_networks=$(echo "$wx_wifi_json_data" | jq -r '
+        [.. | select(.config?.mode? == "sta")? | .config.network[0]? | select(. != null)] | 
+        if length > 1 then 
+            "error:multiple_sta" 
+        elif length == 0 then 
+            "error:no_sta" 
+        else 
+            .[0] 
+        end')
+    
+    # 检查STA接口数量
+    case "$wx_sta_networks" in
+        "error:multiple_sta")
+            echo '{"error": "检测到多个STA接口，只支持一个STA接口的配置"}' >&2
+            return 1
+            ;;
+        "error:no_sta")
+            echo '{"error": "未获取到无线中继模式的设备信息"}' >&2
+            return 1
+            ;;
+    esac
+
+    # 步骤2：获取STA接口状态
+    local wx_sta_status=$(ubus call "network.interface.${wx_sta_networks}" status 2>/dev/null | jsonfilter -e '@.up' || echo "false")
+
+    # 步骤3：处理数据并生成优化后的JSON结构
+    local wx_final_output=$(echo "$wx_wifi_json_data" | jq --arg sta_network "$wx_sta_networks" --argjson sta_status "$wx_sta_status" '
+    def find_device_for_sta($sta_section):
+        to_entries[] | select(.value.interfaces[]?.section == $sta_section) | .key;
+    
+    def find_band_for_device($device_name):
+        .[$device_name].config.band;
+    
+    {
+        "devices": (
+            # 首先收集所有设备信息
+            [to_entries[] | {
+                device: .key,
+                band: .value.config.band,
+                channel: (.value.config.channel // ""),
+                htmode: .value.config.htmode,
+                # 获取AP接口信息
+                ap: (.value.interfaces[] | select(.config.mode == "ap") | {
+                    ssid: .config.ssid,
+                    hidden: (.config.hidden // false),
+                    encryption: .config.encryption,
+                    key: .config.key,
+                    disabled: (.config.disabled // false)
+                })
+            }] 
+            # 然后按频段分组
+            | reduce .[] as $item ({}; 
+                .[$item.band] = {
+                    device: $item.device,
+                    band: $item.band,
+                    channel: $item.channel,
+                    htmode: $item.htmode,
+                    ssid: $item.ap.ssid,
+                    hidden: $item.ap.hidden,
+                    encryption: $item.ap.encryption,
+                    key: $item.ap.key,
+                    disabled: $item.ap.disabled
                 }
-            ),
-            # 处理5GHz设备信息
-            "5g_device": (
-                # 遍历所有设备选择5GHz频段的设备
-                to_entries[] | select(.value.config.band == "5g") | {
-                    "device": (.key // false),                    # 设备名称
-                    "band": (.value.config.band // false),        # 频段(5g)
-                    "channel": (.value.config.channel // false),  # 信道
-                    "htmode": (.value.config.htmode // false),    # 无线模式(HE160等)
-                    # 从interfaces数组中选择AP模式的接口配置
-                    "ssid": (.value.interfaces[] | select(.config.mode == "ap") | .config.ssid // false),         # SSID名称
-                    "hidden": (.value.interfaces[] | select(.config.mode == "ap") | .config.hidden // false),     # 是否隐藏SSID
-                    "encryption": (.value.interfaces[] | select(.config.mode == "ap") | .config.encryption // false), # 加密方式
-                    "key": (.value.interfaces[] | select(.config.mode == "ap") | .config.key // false),          # 无线密码
-                    "disabled": (.value.interfaces[] | select(.config.mode == "ap") | .config.disabled // false)  # 是否禁用
-                }
-            ),
-            # 处理STA（客户端）模式的接口信息
-            "sta": (
-                # 获取所有sta接口到临时变量
-                [to_entries[] | .value.interfaces[] | select(.config.mode == "sta")] as $sta_interfaces |
-                # 检查是否只有一个sta接口且ifname存在
-                if ($sta_interfaces | length) == 1 and ($sta_interfaces[0].ifname != null) then
-                    # 如果条件满足，提取sta接口信息
-                    [to_entries[] | .value.config.band as $band | .key as $device | 
-                    .value.interfaces[] | select(.config.mode == "sta") | {
-                        "device": ($device // false),           # 设备名称
-                        "band": ($band // false),               # 频段
-                        "section": (.section // false),         # 配置区段名称
-                        "ifname": (.ifname // false),           # 接口名称
-                        "ssid": (.config.ssid // false),        # 连接的SSID
-                        "encryption": (.config.encryption // false), # 加密方式
-                        "key": (.config.key // false),          # 连接密码
-                        "network": (.config.network[0] // false) # 网络接口名称
-                    }]
-                else
-                    # 如果不满足条件，返回空数组
-                    []
-                end
             )
-        }
-    } | [
-        # 将所有数据转换为TSV格式，方便后续处理
-        # 2.4GHz设备数据
-        .wireless."2g_device".device,
-        .wireless."2g_device".band,
-        .wireless."2g_device".channel,
-        .wireless."2g_device".htmode,
-        .wireless."2g_device".ssid,
-        .wireless."2g_device".hidden,
-        .wireless."2g_device".encryption,
-        .wireless."2g_device".key,
-        .wireless."2g_device".disabled,
-        # 5GHz设备数据
-        .wireless."5g_device".device,
-        .wireless."5g_device".band,
-        .wireless."5g_device".channel,
-        .wireless."5g_device".htmode,
-        .wireless."5g_device".ssid,
-        .wireless."5g_device".hidden,
-        .wireless."5g_device".encryption,
-        .wireless."5g_device".key,
-        .wireless."5g_device".disabled,
-        # STA接口数据（如果不存在则返回false）
-        (.wireless.sta[0].device // false),
-        (.wireless.sta[0].band // false),
-        (.wireless.sta[0].section // false),
-        (.wireless.sta[0].ifname // false),
-        (.wireless.sta[0].ssid // false),
-        (.wireless.sta[0].encryption // false),
-        (.wireless.sta[0].key // false),
-        (.wireless.sta[0].network // false)
-    ] | @tsv')
+        ),
+        "sta": (first(.. | select(.config?.mode? == "sta")) as $sta | {
+            "device": find_device_for_sta($sta.section),
+            "band": find_band_for_device(find_device_for_sta($sta.section)),
+            "section": $sta.section,
+            "ifname": $sta.ifname,
+            "ssid": $sta.config.ssid,
+            "encryption": $sta.config.encryption,
+            "key": $sta.config.key,
+            "network": ($sta.config.network | first // null),
+            "sta_status": $sta_status
+        })
+    }')
 
-    # 使用IFS和read命令将TSV格式数据读入到各个变量中
-    IFS=$'\t' read -r \
-        device_2g band_2g channel_2g htmode_2g ssid_2g hidden_2g encryption_2g key_2g disabled_2g \
-        device_5g band_5g channel_5g htmode_5g ssid_5g hidden_5g encryption_5g key_5g disabled_5g \
-        sta_device sta_band sta_section sta_ifname sta_ssid sta_encryption sta_key sta_network \
-        <<< "$vars"
-
-    # 根据sta_device的值判断返回值
-    # 如果sta_device不是"false"，说明成功获取到了STA接口信息，返回0
-    # 否则返回1
-    # 判断sta_device 是否为"false" 
-    if [ "$sta_device" != "false" ] && [ -n "$sta_device" ] && [ "$sta_device" != "null" ]; then
-        return 0
+    # 输出json数据
+    #echo "$wx_final_output" | jq -r '.'
+    
+    # 动态获取所有频段
+    local bands=$(echo "$wx_final_output" | jq -r '.devices | keys[]')
+    
+    # 解析JSON并设置变量
+    for band in $bands; do
+        # 设备基本信息
+        local wx_device_info=$(echo "$wx_final_output" | jq -r --arg band "$band" '.devices[$band]')
+        # 检查是否有设备信息
+        if [ -n "$wx_device_info" ] && [ "$wx_device_info" != "null" ]; then
+            # 设置AP信息变量
+            eval "device_${band}=\"$(echo "$wx_device_info" | jq -r '.device')\""
+            eval "band_${band}=\"$(echo "$wx_device_info" | jq -r '.band')\""
+            eval "channel_${band}=\"$(echo "$wx_device_info" | jq -r '.channel')\""
+            eval "htmode_${band}=\"$(echo "$wx_device_info" | jq -r '.htmode')\""
+            eval "ssid_${band}=\"$(echo "$wx_device_info" | jq -r '.ssid')\""
+            eval "hidden_${band}=\"$(echo "$wx_device_info" | jq -r '.hidden')\""
+            eval "encryption_${band}=\"$(echo "$wx_device_info" | jq -r '.encryption')\""
+            eval "key_${band}=\"$(echo "$wx_device_info" | jq -r '.key')\""
+            eval "disabled_${band}=\"$(echo "$wx_device_info" | jq -r '.disabled')\""
+        else
+            # 如果设备不存在，设置空值
+            eval "device_${band}="
+            eval "band_${band}="
+            eval "channel_${band}="
+            eval "htmode_${band}="
+            eval "ssid_${band}="
+            eval "hidden_${band}="
+            eval "encryption_${band}="
+            eval "key_${band}="
+            eval "disabled_${band}="
+        fi
+    done
+    
+    # 设置STA信息变量
+    local wx_sta_info=$(echo "$wx_final_output" | jq -r '.sta')
+    if [ "$wx_sta_info" != "null" ]; then
+        sta_device="$(echo "$wx_sta_info" | jq -r '.device')"
+        sta_band="$(echo "$wx_sta_info" | jq -r '.band')"
+        sta_section="$(echo "$wx_sta_info" | jq -r '.section')"
+        sta_ifname="$(echo "$wx_sta_info" | jq -r '.ifname')"
+        sta_ssid="$(echo "$wx_sta_info" | jq -r '.ssid')"
+        sta_encryption="$(echo "$wx_sta_info" | jq -r '.encryption')"
+        sta_key="$(echo "$wx_sta_info" | jq -r '.key')"
+        sta_network="$(echo "$wx_sta_info" | jq -r '.network')"
+        sta_status="$(echo "$wx_sta_info" | jq -r '.sta_status')"
     else
-        return 1
+        sta_device=""
+        sta_band=""
+        sta_section=""
+        sta_ifname=""
+        sta_ssid=""
+        sta_encryption=""
+        sta_key=""
+        sta_network=""
+        sta_status=""
     fi
-    # echo "2.4G设备："
-    # echo "设备名：$device_2g"
-    # echo "频段：$band_2g"
-    # echo "频道：$channel_2g"
-    # echo "HT模式：$htmode_2g"
-    # echo "SSID：$ssid_2g"
-    # echo "隐藏SSID：$hidden_2g"
-    # echo "加密方式：$encryption_2g"
-    # echo "密码：$key_2g"
-    #
-    # echo "5G设备："
-    # echo "设备名：$device_5g"
-    # echo "频段：$band_5g"
-    # echo "频道：$channel_5g"
-    # echo "HT模式：$htmode_5g"
-    # echo "SSID：$ssid_5g"
-    # echo "隐藏SSID：$hidden_5g"
-    # echo "加密方式：$encryption_5g"
-    # echo "密码：$key_5g"
-    #
-    # echo "STA设备："
-    # echo "设备名：$sta_device"
-    # echo "频段：$sta_band"
-    # echo "配置节：$sta_section"
-    # echo "接口名：$sta_ifname"
-    # echo "SSID：$sta_ssid"
-    # echo "加密方式：$sta_encryption"
-    # echo "密码：$sta_key"
-    # echo "网络：$sta_network"
+
+    # 返回0表示成功，并且结束函数
+    return 0
+    # debug 动态获取所有频段并打印信息
+    for band in $bands; do
+        echo "${band}设备: $(eval echo \$device_${band})"
+        echo "${band}频段: $(eval echo \$band_${band})"
+        echo "${band}信道: $(eval echo \$channel_${band})"
+        echo "${band}HT模式: $(eval echo \$htmode_${band})"
+        echo "${band} SSID: $(eval echo \$ssid_${band})"
+        echo "${band}是否隐藏: $(eval echo \$hidden_${band})"
+        echo "${band}加密方式: $(eval echo \$encryption_${band})"
+        echo "${band}密钥: $(eval echo \$key_${band})"
+        echo "${band}是否禁用: $(eval echo \$disabled_${band})"
+        echo
+    done
+    # 打印STA接口信息
+    echo "STA设备: $sta_device"
+    echo "STA频段: $sta_band"
+    echo "STA区域: $sta_section"
+    echo "STA接口名称: $sta_ifname"
+    echo "STA SSID: $sta_ssid"
+    echo "STA加密方式: $sta_encryption"
+    echo "STA密钥: $sta_key"
+    echo "STA网络接口名称: $sta_network"
+    echo "STA状态: $sta_status" 
+
 }
 
 
@@ -740,7 +768,13 @@ wireless_save_wifi() {
         uci set wireless.${device_2g}.htmode="$htmode_2g"             # 设置2.4G带宽模式
     fi
     if [ -n "${hidden_2g+x}" ]; then
-        uci set wireless.default_${device_2g}.hidden="$hidden_2g"     # 设置2.4G是否隐藏
+        # 这里判断hidden的值，如果是true，则设置为1，否则删除该参数
+        if [ "$hidden_2g" == "true" ]; then
+            uci set wireless.default_${device_2g}.hidden="1"
+        else
+            # 删除hidden参数
+            uci del wireless.default_${device_2g}.hidden
+        fi
     fi
     
     # 5G设置
@@ -762,7 +796,13 @@ wireless_save_wifi() {
         uci set wireless.${device_5g}.htmode="$htmode_5g"             # 设置5G带宽模式
     fi
     if [ -n "${hidden_5g+x}" ]; then
-        uci set wireless.default_${device_5g}.hidden="$hidden_5g"     # 设置5G是否隐藏
+        # 这里判断hidden的值，如果是true，则设置为1，否则删除该参数
+        if [ "$hidden_5g" == "true" ]; then
+            uci set wireless.default_${device_5g}.hidden="1"
+        else
+            # 删除hidden参数
+            uci del wireless.default_${device_5g}.hidden
+        fi
     fi
     
     # 提交更改到UCI配置
