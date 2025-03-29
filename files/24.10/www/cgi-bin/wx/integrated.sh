@@ -17,7 +17,7 @@ RETRYWIFI_TIMES="688"
 #桥接后还是无法联网，则重启次数
 RESTART="10"
 # 检测互联网连通性的服务器地址
-PING_HOST="223.6.6.6"
+PING_HOST="223.5.5.5"
 # 获取当前脚本所在目录 日志文件的存储路径
 LOG_FILE="$(dirname "$(readlink -f "$0")")/$(basename $0 .sh).log"
 # 设备名称

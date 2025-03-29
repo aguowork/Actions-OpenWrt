@@ -60,14 +60,8 @@ sed -i 's/uid=123456789/uid=3192362522/g' files/etc/JiaoBen/wbzt.sh
 echo -e "\toption token '78846bf5-9a1f-4178-8aca-eeac5c38d4e6'" >> feeds/nas/network/services/ddnsto/files/ddnsto.config
 sed -i "s/option enabled '0'/option enabled '1'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
 sed -i "s/option index '.*'/option index '0'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
-sed -i 's/DDNSTO 远程控制/ddnsto/g' feeds/nas_luci/luci/luci-app-ddnsto/luasrc/controller/ddnsto.lua
-sed -i 's/远程开机服务/wol/g' feeds/nas_luci/luci/luci-app-ddnsto/luasrc/controller/ddnsto.lua
-sed -i 's/共享磁盘/文件/g' feeds/nas_luci/luci/luci-app-ddnsto/luasrc/controller/ddnsto.lua
-sed -i 's/启用后可支持控制台的“文件管理”及“远程开机”功能/启用后可支持控制台/g' feeds/nas_luci/luci/luci-app-ddnsto/luasrc/controller/ddnsto.lua
-sed -i 's/DDNSTO远程控制是Koolcenter小宝开发的，支持http2的远程穿透控制插件。/DDNSTO Koolcenter小宝开发的，支持http2的穿透插件。/g' feeds/nas_luci/luci/luci-app-ddnsto/luasrc/controller/ddnsto.lua
-sed -i 's|支持通过浏览器访问自定义域名访问内网设备后台、远程RDP/VNC桌面、远程文件管理等多种功能。|支持通过浏览器访问自定义域名等多种功能。|g' feeds/nas_luci/luci/luci-app-ddnsto/luasrc/controller/ddnsto.lua
 
-sed -i 's/"应用过滤"/"过滤规则"/g' feeds/luci/applications/luci-app-appfilter/po/zh_Hans/appfilter.po
+# 替换luci-app-wechatpush
 rm -rf feeds/luci/applications/luci-app-wechatpush
 git clone https://github.com/aguowork/luci-app-wechatpush-tty228.git feeds/luci/applications/luci-app-wechatpush
 sed -i "s/option device_name '.*'/option device_name 'AX6000'/g" feeds/luci/applications/luci-app-wechatpush/root/etc/config/wechatpush
