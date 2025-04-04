@@ -70,5 +70,5 @@ sed -i 's|支持通过浏览器访问自定义域名访问内网设备后台、�
 
 sed -i 's/"应用过滤"/"过滤规则"/g' feeds/luci/applications/luci-app-appfilter/po/zh_Hans/appfilter.po
 rm -rf feeds/luci/applications/luci-app-wechatpush
-git clone https://github.com/tty228/luci-app-wechatpush.git feeds/luci/applications/luci-app-wechatpush
+git clone https://github.com/aguowork/luci-app-wechatpush-tty228.git feeds/luci/applications/luci-app-wechatpush
 sed -i "s/option device_name '.*'/option device_name 'AX6000'/g" feeds/luci/applications/luci-app-wechatpush/root/etc/config/wechatpush
