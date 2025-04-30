@@ -62,5 +62,5 @@ sed -i 's/DDNSTO远程控制是Koolcenter小宝开发的，支持http2的远程�
 sed -i 's|支持通过浏览器访问自定义域名访问内网设备后台、远程RDP/VNC桌面、远程文件管理等多种功能。|支持通过浏览器访问自定义域名等多种功能。|g' feeds/nas_luci/luci/luci-app-ddnsto/luasrc/controller/ddnsto.lua
 sed -i 's/"应用过滤"/"过滤规则"/g' feeds/luci/applications/luci-app-appfilter/po/zh_Hans/appfilter.po
 rm -rf feeds/luci/applications/luci-app-wechatpush
-git clone https://github.com/aguowork/luci-app-wechatpush-tty228.git feeds/luci/applications/luci-app-wechatpush
+git clone https://github.com/tty228/luci-app-wechatpush.git feeds/luci/applications/luci-app-wechatpush
 sed -i "s/option device_name '.*'/option device_name '360-T7'/g" feeds/luci/applications/luci-app-wechatpush/root/etc/config/wechatpush
