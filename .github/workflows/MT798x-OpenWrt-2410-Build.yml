@@ -22,8 +22,8 @@ on:
 
 # 环境变量设置
 env:
-  REPO_URL: https://github.com/aguowork/immortalwrt-mt798x-24.10.git  # 源码仓库地址
-  REPO_BRANCH: 2410  # 源码分支
+  REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6.git  # 源码仓库地址
+  REPO_BRANCH: openwrt-24.10-6.6  # 源码分支
   FEEDS_CONF: feeds.conf.default  # feeds 配置文件
   UPLOAD_BIN_DIR: false  # 是否上传整个 bin 目录
   UPLOAD_FIRMWARE: true  # 是否上传固件
