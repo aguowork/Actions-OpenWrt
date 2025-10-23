@@ -12,7 +12,7 @@
 
 # 修改openwrt登陆地址
 sed -i 's/192.168.6.1/192.168.100.1/g' package/base-files/files/bin/config_generate
-sed -i 's/root:::0:99999:7:::/root:\$1$wQIghyNn$dqPUfUazp1dDD\/NvSSSs\/1:20002:0:99999:7:::/g' package/base-files/files/etc/shadow
+sed -i 's/\(root::0:0:99999:7:::\)/root:$1$2mmQ7Xbj$5FG6wrw3RA2zD\/WKktai\/.:19782:0:99999:7:::/g' package/base-files/files/etc/shadow
 
 # 修改主机名字（不能纯数字或者使用中文）
 sed -i "s/hostname='.*'/hostname='SR1041ZT'/g" package/base-files/files/bin/config_generate
@@ -41,7 +41,7 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 # 无线中继信号切换
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 # 无线中继预设配置
-echo '{"wifi":[{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"b1403","encryption":"psk2","password":"13539012490","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"autowifiname":["Name1","Name2"],"CQ_TIMES":0}]}' | jq . > files/www/wx/wifi-config.json
+echo '{"wifi":[{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"Tenda_1F5600","encryption":"psk2","password":"qwer15207556371asdf","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"b1403","encryption":"psk2","password":"13539012490","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"autowifiname":["Name1","Name2"],"CQ_TIMES":0}]}' | jq . > files/www/wx/wifi-config.json
 
 
 #重新启动日志
@@ -53,7 +53,7 @@ echo -e "\toption token '78846bf5-9a1f-4178-8aca-eeac5c38d4e6'" >> feeds/nas/net
 sed -i "s/option enabled '0'/option enabled '1'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
 sed -i "s/option index '.*'/option index '1'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
 
-# 替换luci-app-wechatpush
+#wechatpush
 rm -rf feeds/luci/applications/luci-app-wechatpush
 git clone https://github.com/aguowork/luci-app-wechatpush-tty228.git feeds/luci/applications/luci-app-wechatpush
 sed -i "s/option device_name '.*'/option device_name 'Opw'/g" feeds/luci/applications/luci-app-wechatpush/root/etc/config/wechatpush
