@@ -92,7 +92,7 @@ jobs:
 
     - name: Load custom configuration  # 加载自定义配置
       run: |
-        [ -e files/24.10 ] && mkdir -p openwrt/files && mv files/24.10/* openwrt/files
+        [ -e files/24.10 ] && mkdir -p openwrt/files && cp -rf files/24.10/* openwrt/files/
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
