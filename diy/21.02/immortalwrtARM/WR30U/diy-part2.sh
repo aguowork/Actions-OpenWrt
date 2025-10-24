@@ -41,7 +41,7 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 # 无线中继信号切换
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 # 无线中继预设配置
-echo '{"wifi":[{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"b1403","encryption":"psk2","password":"13539012490","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"autowifiname":["Name1","Name2"],"CQ_TIMES":0}]}' | jq . > files/www/wx/wifi-config.json
+echo '{"wifi":[{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"Tenda_1F5600","encryption":"psk2","password":"qwer15207556371asdf","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"b1403","encryption":"psk2","password":"13539012490","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"autowifiname":["Name1","Name2"],"CQ_TIMES":0}]}' | jq . > files/www/wx/wifi-config.json
 
 
 #重新启动日志
