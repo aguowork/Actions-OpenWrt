@@ -88,9 +88,10 @@ check_internet #检查互联网连通性
 check_log_file #检查日志文件是否存在，不存在则创建日志文件
 
 # 执行 curl 命令，并将输出保存到 json 变量中
-json_data=$(curl -s 'https://weibo.com/ajax/profile/info?uid=123456789' \
-  -H 'user-agent: Mozilla/5.0 (compatible; OpenWrt-Curl/7.76.1)' \
-  -H 'cookie: SUBP=0033WrSXqPxfM72-Ws9jqgMF55529P9D9WW8B_YqNSTTLAQjsCyQRNh7; SINAGLOBAL=407691405303.4852.1715057530312; ULV=1717117485200:3:3:1:6705765528571.046.1717117485174:1715134822016; UOR=,,cn.bing.com; WBPSESS=gJ7ElPMf_3q2cdj5JUfmvHwiwgiIZ7iWpDy9pdknT22VoYm35Lxd5oIpJGcEiFRbVf1dHSiQb_nE-YahsBKpEi7cWwoBB-CwIjMbAQH7YHz608OF33JN1SLi1zeI6fhJ; SUB=_2AkMROYwRf8NxqwFRmfsUy2vraYV_wgnEieKnZX3KJRMxHRl-yj9kql4HtRB6Ormi_i_OZvB3XEXW2okwJzfJoxB0r0VS; XSRF-TOKEN=s95Y3NytmKofRfQwiDNehSS9')
+json_data=$(curl 'https://weibo.com/ajax/profile/info?uid=123456789' \
+  -H 'cookie: __itrace_wid=8b97545f-536c-4071-0b4f-30e09d22a6b8; SINAGLOBAL=4230364064491.914.1742549919746; SUB=_2AkMfTHPWf8NxqwFRmfESxG7na4VxyArEieKpEIINJRMxHRl-yT9kqkIatRB6NMxdOZ69XdgFXJCd8bS6oam6zuK4Q_XK; SUBP=0033WrSXqPxfM72-Ws9jqgMF55529P9D9W5dDmhO_BzaZZOZ8jhc6ckX; ULV=1754020326257:2:1:1:1914175238695.7656.1754020326254:1742549919763; XSRF-TOKEN=RTknlgofA-SHEQ8fYz-sTldc; WBPSESS=voLfPs8eGy8pkyBjwwkfan7AknWcQRMSyA4XUzE6OS8PBLSCNPSY8WJxxC7z19gJMsV-z5Su6kyHBWbrouXl2k6iqdzcKDyFVWYKkrbbfRJ2ByllX1ffxV2HDMkhxaNka-xRm1z1uyga2FqxRJUM22IU-xn3tPAN5gQ-Gf9OBBI=' \
+  -H 'referer: https://weibo.com/u/123456789' \
+  -H 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36')
 
 # 使用jq工具解析JSON数据并提取字段值
 statuses_count=$(echo "$json_data" | jq -r '.data.user | .statuses_count')

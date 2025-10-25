@@ -69,7 +69,7 @@ echo '{"wifi":[{"name":"CMCC-Ptbf-5G","encryption":"psk2","password":"cccc5926",
 
 # 脚本参数配置
 sed -i 's/RETRY_INTERVAL=120/RETRY_INTERVAL=120/g' files/etc/JiaoBen/qdts.sh
-sed -i 's/uid=123456789/uid=3192362522/g' files/etc/JiaoBen/wbzt.sh
+sed -i 's/123456789/3192362522/g' files/etc/JiaoBen/wbzt.sh
 
 echo "脚本和定时任务配置完成！"
 
