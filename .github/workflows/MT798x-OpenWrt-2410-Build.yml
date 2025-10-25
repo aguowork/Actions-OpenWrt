@@ -1,8 +1,19 @@
 #
 # https://github.com/P3TERX/Actions-OpenWrt
 # MT798x 系列路由器固件自动编译脚本
+#
+# 编译流程说明：
+# 1. diy-part1.sh                    # 添加 feed 源
+# 2. feeds update -a                 # 更新 feeds
+# 3. feeds install -a                # 安装 feeds 包
+# 4. 复制 defconfig 到 .config       # 基础配置
+# 5. 追加你的配置文件到 .config      # CONFIG_PACKAGE_luci-app-adguardhome=y
+# 6. diy-part2.sh                    # ← 这里添加 adguardhome 包！
+# 7. make defconfig                  # 合并配置，检查依赖
+# 8. make download                   # 下载源码
+# 9. make compile                    # 编译
 
-name: MT798x OpenWrt 2410 Build
+name: MT798x OpenWrt 固件编译 (ImmortalWrt 24.10)
 
 # 触发工作流程的事件
 on:
@@ -39,16 +50,16 @@ jobs:
         device: ${{ github.event.inputs.device_selection == '全部' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
 
     steps:
-    - name: Record workflow start time  # 记录工作流开始时间和系统信息
+    - name: 📝 记录工作流开始时间
       id: workflow_time
       run: |
         echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
         echo "system_info=$(lsb_release -ds | tr -d '"')" >> $GITHUB_OUTPUT
 
-    - name: Checkout  # 检出代码
+    - name: 📥 检出代码仓库
       uses: actions/checkout@main
 
-    - name: Initialization environment  # 初始化编译环境
+    - name: 🔧 初始化编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -62,14 +73,14 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: Clone source code  # 克隆源码
+    - name: 📦 克隆 OpenWrt 源码
       working-directory: /workdir
       run: |
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Set device-specific variables # 设置设备配置文件和自定义脚本变量
+    - name: ⚙️ 设置设备特定变量
       run: |
         CONFIG_BASE_PATH="./config/24.10/immortalwrtARM"
         DIY_BASE_PATH="./diy/24.10/immortalwrtARM"
@@ -77,28 +88,43 @@ jobs:
         echo "DIY_P1_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
         echo "DIY_P2_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
 
-    - name: Load custom feeds  # 加载自定义 feeds
+    - name: 🔌 加载自定义 feeds (diy-part1.sh)
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
 
-    - name: Update feeds  # 更新 feeds
+    - name: 🔄 更新 feeds 源
       run: cd openwrt && ./scripts/feeds update -a
 
-    - name: Install feeds  # 安装 feeds
+    - name: 📦 安装 feeds 软件包
       run: cd openwrt && ./scripts/feeds install -a
 
-    - name: Load custom configuration  # 加载自定义配置
+    - name: 📝 加载自定义配置
       run: |
         [ -e files/24.10 ] && mkdir -p openwrt/files && cp -rf files/24.10/* openwrt/files/
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
         cd openwrt
+        # 根据设备型号选择对应的 defconfig 基础配置
+        case "${{ matrix.device }}" in
+          AX6000)
+            cp -f defconfig/mt7986-ax6000.config .config
+            ;;
+          WR30U)
+            cp -f defconfig/mt7981-ax3000.config .config
+            ;;
+          360T7)
+            cp -f defconfig/mt7981-ax3000.config .config
+            ;;
+        esac
+        # 追加用户自定义插件配置
+        if [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ]; then
+          cat $GITHUB_WORKSPACE/$CONFIG_FILE >> .config
+        fi
+        chmod +x $GITHUB_WORKSPACE/$DIY_P2_SH
         $GITHUB_WORKSPACE/$DIY_P2_SH
 
-    - name: Download package  # 下载软件包
+    - name: ⬇️ 下载编译依赖
       id: package
       run: |
         cd openwrt
@@ -107,7 +133,7 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: Compile the firmware  # 编译固件
+    - name: 🔨 编译固件
       id: compile
       run: |
         cd openwrt
@@ -118,18 +144,18 @@ jobs:
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Check space usage  # 检查空间使用情况
+    - name: 💾 检查磁盘空间使用情况
       if: (!cancelled())
       run: df -hT
 
-    - name: Upload bin directory  # 上传 bin 目录
+    - name: 📤 上传 bin 目录
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
         name: OpenWrt_${{ matrix.device }}_bin_${{ env.FILE_DATE }}
         path: openwrt/bin
 
-    - name: Organize files  # 整理文件
+    - name: 📦 整理固件文件
       id: organize
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
@@ -138,7 +164,7 @@ jobs:
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Generate release tag  # 生成发布标签
+    - name: 🏷️ 生成发布标签
       id: tag
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
@@ -146,14 +172,14 @@ jobs:
         touch release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware directory  # 上传固件目录
+    - name: ⬆️ 上传固件到 Artifacts
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_${{ matrix.device }}_${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    - name: Upload firmware to release  # 上传固件到 Release
+    - name: 🚀 发布固件到 Release
       uses: ncipollo/release-action@v1
       if: steps.tag.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
@@ -164,7 +190,7 @@ jobs:
         allowUpdates: true
         replacesArtifacts: true
 
-    - name: Get firmware download url  # 获取固件Release下载地址、Release Tag页面
+    - name: 🔗 获取固件下载链接
       id: firmware
       if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
       run: |
@@ -173,7 +199,7 @@ jobs:
         echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> $GITHUB_OUTPUT
         echo "all_firmware_url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.release_tag }}" >> $GITHUB_OUTPUT
 
-    - name: Send build notification  # 发送编译完成通知
+    - name: 📧 发送编译完成通知
       if: always()
       run: |
         # 定义函数
@@ -251,13 +277,13 @@ jobs:
           -d "${JSON_DATA}" \
           https://wxpusher.zjiecode.com/api/send/message
 
-    - name: Delete workflow runs  # 删除旧的工作流运行记录
+    - name: 🗑️ 清理旧的工作流运行记录
       uses: Mattraks/delete-workflow-runs@main
       with:
         retain_days: 0
         keep_minimum_runs: 2
 
-    - name: Remove old Releases  # 删除旧的发布
+    - name: 🗑️ 清理旧的 Release 发布
       uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
       with:
