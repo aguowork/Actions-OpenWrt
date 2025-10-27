@@ -39,7 +39,7 @@ sed -i 's/192.168.6.1/192.168.6.1/g' package/base-files/files/bin/config_generat
 sed -i 's/root:::0:99999:7:::/root:\$1$wQIghyNn$dqPUfUazp1dDD\/NvSSSs\/1:20002:0:99999:7:::/g' package/base-files/files/etc/shadow
 
 # 修改主机名字（不能纯数字或使用中文）
-sed -i "s/hostname='.*'/hostname='360-T7'/g" package/base-files/files/bin/config_generate
+sed -i "s/hostname='.*'/hostname='360'/g" package/base-files/files/bin/config_generate
 
 # 修改闭源驱动 WiFi 名称
 sed -i 's/ImmortalWrt-2.4G/Y/g' package/mtk/applications/mtwifi-cfg/files/mtwifi.sh

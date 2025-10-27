@@ -42,3 +42,9 @@ uci commit wireless
 # /etc/config/appfilter
 uci set appfilter.global.enable='1'
 uci commit appfilter
+
+# /etc/config/system
+uci set system.led_network.dev='apcli0'
+uci del system.led_network.mode
+uci add_list system.led_network.mode='link'
+uci commit system
