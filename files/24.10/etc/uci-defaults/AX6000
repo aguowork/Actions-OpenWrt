@@ -1,3 +1,5 @@
+# 24.10 openwrt uci一键配置
+
 # /etc/config/autoreboot
 uci set autoreboot.cfg016bf2.enabled='1'
 uci set autoreboot.cfg016bf2.week='3'
@@ -33,7 +35,3 @@ uci set wireless.default_MT7986_1_2.disabled='1'
 uci set wireless.default_MT7986_1_1.encryption='sae-mixed'
 uci set wireless.default_MT7986_1_1.key='88888888..'
 uci commit wireless
-
-# /etc/config/appfilter
-#uci set appfilter.global.enable='1'
-#uci commit appfilter

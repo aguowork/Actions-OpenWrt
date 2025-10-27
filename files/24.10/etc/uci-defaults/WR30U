@@ -39,10 +39,6 @@ uci set wireless.default_MT7981_1_1.key='88888888..'
 uci set wireless.default_MT7981_1_1.disabled='1'
 uci commit wireless
 
-# /etc/config/appfilter
-uci set appfilter.global.enable='1'
-uci commit appfilter
-
 # /etc/config/system
 uci set system.led_network.dev='apcli0'
 uci del system.led_network.mode
