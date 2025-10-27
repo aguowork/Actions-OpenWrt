@@ -1,7 +1,7 @@
 # /etc/config/autoreboot
-uci set autoreboot.cfg01f8be.enable='1'
-uci set autoreboot.cfg01f8be.week='5'
-uci set autoreboot.cfg01f8be.hour='9'
+uci set autoreboot.cfg016bf2.enabled='1'
+uci set autoreboot.cfg016bf2.week='1'
+uci set autoreboot.cfg016bf2.hour='9'
 uci commit autoreboot
 
 # /etc/config/firewall
