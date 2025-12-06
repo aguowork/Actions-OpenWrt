@@ -48,6 +48,11 @@ sed -i 's/ImmortalWrt-5G/Y/g' package/mtk/applications/mtwifi-cfg/files/mtwifi.s
 # 删除其他设备的 UCI 配置文件（只保留 360T7）
 find files/etc/uci-defaults/ -type f ! -name '360T7' -exec rm {} \;
 
+# 添加编译时间
+sed -i "s/ImmortalWrt/编译时间 ${build_date} @ Guo/g" include/trusted-firmware-a.mk
+sed -i "s|DISTRIB_DESCRIPTION='%D %V %C'|DISTRIB_DESCRIPTION='%D %V %C (编译时间 ${build_date} @ Guo)'|" package/base-files/files/etc/openwrt_release
+sed -i "1s|^|编译时间 ${build_date} @ Guo\\n|" package/base-files/files/etc/banner
+
 echo "系统配置修改完成！"
 
 

@@ -34,6 +34,7 @@ echo "第三方包处理完成！"
 # ============================================
 
 echo "开始修改系统配置..."
+build_date=$(TZ=UTC-8 date "+%Y.%m.%d")
 
 # 修改 OpenWrt 登录地址和密码
 sed -i 's/192.168.6.1/192.168.31.1/g' package/base-files/files/bin/config_generate
@@ -49,10 +50,10 @@ sed -i 's/ImmortalWrt-5G/G5G/g' package/mtk/applications/mtwifi-cfg/files/mtwifi
 # 删除其他设备的 UCI 配置文件（只保留 AX6000）
 find files/etc/uci-defaults/ -type f ! -name 'AX6000' -exec rm {} \;
 
-# 修改版本名称
-sed -i 's/ImmortalWrt/编译时间 $(TZ=UTC-8 date "+%Y.%m.%d") @ Guo/g' include/trusted-firmware-a.mk
-# sed -i 's/ImmortalWrt/Guo/g' include/u-boot.mk
-# sed -i 's/ImmortalWrt/Guo/g' include/version.mk
+# 添加编译时间
+sed -i "s/ImmortalWrt/编译时间 ${build_date} @ Guo/g" include/trusted-firmware-a.mk
+sed -i "s|DISTRIB_DESCRIPTION='%D %V %C'|DISTRIB_DESCRIPTION='%D %V %C (编译时间 ${build_date} @ Guo)'|" package/base-files/files/etc/openwrt_release
+sed -i "1s|^|编译时间 ${build_date} @ Guo\\n|" package/base-files/files/etc/banner
 
 echo "系统配置修改完成！"
 
