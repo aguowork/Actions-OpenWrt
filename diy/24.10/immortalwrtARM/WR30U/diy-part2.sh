@@ -52,8 +52,11 @@ sed -i 's/ImmortalWrt-5G/H/g' package/mtk/applications/mtwifi-cfg/files/mtwifi.s
 find files/etc/uci-defaults/ -type f ! -name 'WR30U' -exec rm {} \;
 
 # 添加编译时间
+# TF-A 引导固件版本标识中添加编译时间（影响早期启动日志/版本字符串）
 sed -i "s/ImmortalWrt/编译时间 ${build_date} @ Guo/g" include/trusted-firmware-a.mk
+# LuCI 系统概况中追加编译时间信息（/etc/openwrt_release）
 sed -i "s|DISTRIB_DESCRIPTION='%D %V %C'|DISTRIB_DESCRIPTION='%D %V %C (编译时间 ${build_date} @ Guo)'|" package/base-files/files/etc/openwrt_release
+# SSH 登录 banner 顶部插入编译时间
 sed -i "1s|^|编译时间 ${build_date} @ Guo\\n|" package/base-files/files/etc/banner
 
 echo "系统配置修改完成！"
