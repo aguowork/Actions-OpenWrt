@@ -34,7 +34,7 @@ echo "第三方包处理完成！"
 # ============================================
 
 echo "开始修改系统配置..."
-build_date=$(TZ=UTC-8 date "+%Y.%m.%d")
+build_date=$(TZ=UTC-8 date "+%Y%m%d%H%M")
 
 # 修改 OpenWrt 登录地址和密码
 sed -i 's/192.168.6.1/192.168.31.1/g' package/base-files/files/bin/config_generate
@@ -52,9 +52,7 @@ find files/etc/uci-defaults/ -type f ! -name 'AX6000' -exec rm {} \;
 
 # 添加编译时间
 # LuCI 系统概况中追加编译时间信息（/etc/openwrt_release）
-sed -i "s/DISTRIB_DESCRIPTION=.*/DISTRIB_DESCRIPTION='ImmortalWrt By Guo $(date +"%Y%m%d") '/g" package/base-files/files/etc/openwrt_release
-#sed -i "s|DISTRIB_DESCRIPTION='%D %V %C'|DISTRIB_DESCRIPTION='%D %V %C (编译时间 ${build_date} @ Guo)'|" package/base-files/files/etc/openwrt_release
-
+sed -i "s/DISTRIB_DESCRIPTION=.*/DISTRIB_DESCRIPTION='ImmortalWrt By Guo ${build_date} '/g" package/base-files/files/etc/openwrt_release
 # SSH 登录 banner 顶部插入编译时间
 sed -i "1s|^|编译时间 ${build_date} @ Guo\\n|" package/base-files/files/etc/banner
 [ -f files/etc/banner ] && sed -i "1s|^|编译时间 ${build_date} @ Guo\\n|" files/etc/banner
