@@ -1,6 +1,0 @@
-# Put your custom commands here that should be executed once
-# the system init finished. By default this file does nothing.
-#qdts~(if [ ! -x /etc/JiaoBen/qdts.sh ]; then chmod +x /etc/JiaoBen/qdts.sh; fi && /bin/bash /etc/JiaoBen/qdts.sh) &
-#wifi~(sleep 150; if [ ! -x /www/cgi-bin/wx/integrated.sh ]; then chmod +x /www/cgi-bin/wx/integrated.sh; fi && /bin/bash /www/cgi-bin/wx/integrated.sh) &
-chmod +x /www/cgi-bin/wx/*.sh
-exit 0

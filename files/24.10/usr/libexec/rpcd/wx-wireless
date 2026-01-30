@@ -1,0 +1,794 @@
+#!/bin/sh
+
+# wx-wireless - OpenWRT ubus RPC服务
+# 提供无线中继管理的RPC接口
+# 放置于 /usr/libexec/rpcd/wx-wireless
+
+. /usr/share/libubox/jshn.sh # 加载jshn库
+
+CONFIG_DIR="/etc/wx"                          # 配置文件根目录
+CONFIG_FILE="$CONFIG_DIR/wifi-config.json"   # 配置文件路径
+LOG_FILE="$CONFIG_DIR/wx-wireless.log"       # 日志文件路径
+MAX_LOG_SIZE=102400                          # 日志文件最大大小 (Bytes)，超过则自动轮转
+
+# --- 网络连通性检测 ---
+PING_TARGET="223.5.5.5"                      # 用于检测网络通断的 IP 目标
+
+# --- WxPusher 推送配置 ---
+WXPUSHER_ENABLED=1                                # 推送开关 (1=开启, 0=关闭)
+WX_APP_TOKEN="AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6" # WxPusher APP_TOKEN
+WX_MY_UID="UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"      # WxPusher 用户 UID
+WX_TOPIC_ID=0                                     # WxPusher 主题 ID (0表示不使用主题)
+WXPUSHER_API_URL="https://wxpusher.zjiecode.com/api/send/message" # WxPusher API地址
+
+# --- 自动切换热点配置 ---
+STA_NETWORK="wwan"                          # 无线接口所属的网络名称 (如: wwan)
+CHECK_WAIT_TIME=3                            # 循环检测中的等待间隔 (秒)
+AUTO_SWITCH_MAX_RETRIES=25                   # 自动连接/网络检测的最大重试次数
+RETRY_WIFI_INTERVAL=688                      # 相同热点重试的间隔冷却时间 (秒)
+RESTART_THRESHOLD=10                         # 累计切换失败次数达到此值后自动重启系统
+REBOOT_DELAY_TIME=3                          # 触发重启前的缓冲时间 (秒)
+
+
+
+
+
+# 日志记录函数（带自动轮转）
+log_message() {
+    local log_entry="$(date "+%Y-%m-%d %H:%M:%S") - $1"
+    
+    # 检查日志文件大小，超过100KB则保留最后50行
+    if [ -f "$LOG_FILE" ]; then
+        local log_size=$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)
+        if [ "$log_size" -gt "$MAX_LOG_SIZE" ]; then
+            local tmp_file=$(mktemp)
+            tail -n 50 "$LOG_FILE" > "$tmp_file"
+            mv "$tmp_file" "$LOG_FILE"
+        fi
+    fi
+    
+    echo "$log_entry" >> "$LOG_FILE"
+}
+
+# 确保配置文件存在
+init_config() {
+    if [ ! -d "$CONFIG_DIR" ]; then
+        mkdir -p "$CONFIG_DIR"
+    fi
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo '{"wifi":[],"autowifiranking":[{"CQ_TIMES":0}]}' > "$CONFIG_FILE"
+    fi
+}
+
+# 检查网络连通性
+check_connectivity() {
+    ping -c 1 -W 2 "$PING_TARGET" >/dev/null 2>&1
+    return $?
+}
+
+# 获取无线 STA 配置段名称
+get_sta_section() {
+    uci show wireless | grep "mode='sta'" | head -1 | cut -d. -f2
+}
+
+# 校验 WiFi 密码 (只允许可见 ASCII 字符, 8-63位)
+validate_password() {
+    local pwd="$1"
+    # 长度检查
+    local len=${#pwd}
+    if [ "$len" -lt 8 ] || [ "$len" -gt 63 ]; then
+        return 1
+    fi
+    # 字符检查：使用 grep 检查是否只包含 ASCII 32-126
+    if printf "%s" "$pwd" | grep -q '[^ -~]'; then
+        return 1
+    fi
+    return 0
+}
+
+# 获取无线状态
+get_status() {
+    local sta_info sta_ssid sta_key sta_band sta_network sta_ifname bridge_status network_status
+    
+    # 获取STA接口信息
+    sta_info=$(ubus call network.wireless status 2>/dev/null | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]')
+    
+    if [ -z "$sta_info" ]; then
+        echo '{"error": "未找到STA接口"}'
+        return
+    fi
+    
+    sta_ssid=$(echo "$sta_info" | jsonfilter -e '@.config.ssid' 2>/dev/null)
+    sta_key=$(echo "$sta_info" | jsonfilter -e '@.config.key' 2>/dev/null)
+    sta_network=$(echo "$sta_info" | jsonfilter -e '@.config.network[0]' 2>/dev/null)
+    sta_ifname=$(echo "$sta_info" | jsonfilter -e '@.ifname' 2>/dev/null)
+    
+    # 获取频段 - 通过iwinfo获取频率判断
+    local freq=$(iwinfo "$sta_ifname" info 2>/dev/null | awk '/Channel/{print $4}' | tr -d '()')
+    if [ -n "$freq" ]; then
+        if [ "$freq" -gt 5000 ] 2>/dev/null; then
+            sta_band="5G"
+        else
+            sta_band="2.4G"
+        fi
+    else
+        # 备用方案：通过设备配置获取
+        local device=$(echo "$sta_info" | jsonfilter -e '@.config.device' 2>/dev/null)
+        local band_cfg=$(uci get wireless."$device".band 2>/dev/null)
+        case "$band_cfg" in
+            2g) sta_band="2.4G" ;;
+            5g) sta_band="5G" ;;
+            *) sta_band="未知" ;;
+        esac
+    fi
+    
+    # 检查桥接状态
+    if [ -n "$sta_ifname" ]; then
+        local essid=$(iwinfo "$sta_ifname" info 2>/dev/null | awk -F'"' '/ESSID/{print $2}')
+        if [ -n "$essid" ]; then
+            bridge_status="连接成功 $essid"
+        else
+            bridge_status="连接失败"
+        fi
+    else
+        bridge_status="接口不存在"
+    fi
+    
+    # 检查网络状态
+    if check_connectivity; then
+        network_status="连接成功"
+    else
+        network_status="连接失败"
+    fi
+    
+    # 获取信号强度 (dBm)
+    local signal=""
+    if [ -n "$sta_ifname" ]; then
+        signal=$(iwinfo "$sta_ifname" assoclist 2>/dev/null | awk 'NR==1 {print $2}')
+    fi
+    
+    json_init
+    json_add_string "ssid" "$sta_ssid"
+    json_add_string "key" "$sta_key"
+    json_add_string "band" "$sta_band"
+    json_add_string "interface" "${sta_network:-unknown}"
+    json_add_string "bridge_status" "$bridge_status"
+    json_add_string "network_status" "$network_status"
+    json_add_string "signal" "${signal:-unknown}"
+    json_dump
+}
+
+# 获取无线设置
+get_wireless_settings() {
+    local device_2g device_5g
+    
+    # 查找2.4G和5G设备
+    for dev in $(uci show wireless | grep "\.band=" | cut -d. -f2); do
+        local band=$(uci get wireless."$dev".band 2>/dev/null)
+        case "$band" in
+            2g) device_2g="$dev" ;;
+            5g) device_5g="$dev" ;;
+        esac
+    done
+    
+    json_init
+    
+    # 2.4G设置
+    if [ -n "$device_2g" ]; then
+        json_add_string "disabled_2g" "$(uci get wireless.default_$device_2g.disabled 2>/dev/null || echo 'false')"
+        json_add_string "ssid_2g" "$(uci get wireless.default_$device_2g.ssid 2>/dev/null)"
+        json_add_string "key_2g" "$(uci get wireless.default_$device_2g.key 2>/dev/null)"
+        json_add_string "channel_2g" "$(uci get wireless.$device_2g.channel 2>/dev/null)"
+        json_add_string "htmode_2g" "$(uci get wireless.$device_2g.htmode 2>/dev/null)"
+        json_add_string "hidden_2g" "$(uci get wireless.default_$device_2g.hidden 2>/dev/null || echo 'false')"
+    fi
+    
+    # 5G设置
+    if [ -n "$device_5g" ]; then
+        json_add_string "disabled_5g" "$(uci get wireless.default_$device_5g.disabled 2>/dev/null || echo 'false')"
+        json_add_string "ssid_5g" "$(uci get wireless.default_$device_5g.ssid 2>/dev/null)"
+        json_add_string "key_5g" "$(uci get wireless.default_$device_5g.key 2>/dev/null)"
+        json_add_string "channel_5g" "$(uci get wireless.$device_5g.channel 2>/dev/null)"
+        json_add_string "htmode_5g" "$(uci get wireless.$device_5g.htmode 2>/dev/null)"
+        json_add_string "hidden_5g" "$(uci get wireless.default_$device_5g.hidden 2>/dev/null || echo 'false')"
+    fi
+    
+    json_dump
+}
+
+# 保存无线设置
+save_wireless_settings() {
+    local device_2g device_5g
+    
+    # 查找设备
+    for dev in $(uci show wireless | grep "\.band=" | cut -d. -f2); do
+        local band=$(uci get wireless."$dev".band 2>/dev/null)
+        case "$band" in
+            2g) device_2g="$dev" ;;
+            5g) device_5g="$dev" ;;
+        esac
+    done
+    
+    # 解析输入参数
+    json_load "$1"
+    
+    local d2g d5g k2g k5g
+    json_get_var d2g disabled_2g
+    json_get_var d5g disabled_5g
+    json_get_var k2g key_2g
+    json_get_var k5g key_5g
+    
+    # P0 安全校验：禁止同时关闭两个 WiFi
+    if [ "$d2g" = "1" ] && [ "$d5g" = "1" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "至少需开启一个无线网络，以防无法访问"
+        json_dump
+        return
+    fi
+    
+    # 密码合法性校验
+    if [ "$d2g" = "0" ] && [ -n "$k2g" ]; then
+        if ! validate_password "$k2g"; then
+            json_init
+            json_add_string "status" "error"
+            json_add_string "message" "2.4G WiFi密码格式错误：只能使用英文、数字和符号(8-63位)"
+            json_dump
+            return
+        fi
+    fi
+    
+    if [ "$d5g" = "0" ] && [ -n "$k5g" ]; then
+        if ! validate_password "$k5g"; then
+            json_init
+            json_add_string "status" "error"
+            json_add_string "message" "5G WiFi密码格式错误：只能使用英文、数字和符号(8-63位)"
+            json_dump
+            return
+        fi
+    fi
+
+    # 保存2.4G设置
+    if [ -n "$device_2g" ]; then
+        local val
+        json_get_var val disabled_2g && uci set wireless.default_$device_2g.disabled="$val"
+        json_get_var val ssid_2g && uci set wireless.default_$device_2g.ssid="$val"
+        json_get_var val key_2g && uci set wireless.default_$device_2g.key="$val"
+        json_get_var val channel_2g && uci set wireless.$device_2g.channel="$val"
+        json_get_var val htmode_2g && uci set wireless.$device_2g.htmode="$val"
+        json_get_var val hidden_2g && {
+            if [ "$val" = "true" ] || [ "$val" = "1" ]; then
+                uci set wireless.default_$device_2g.hidden="1"
+            else
+                uci delete wireless.default_$device_2g.hidden 2>/dev/null
+            fi
+        }
+    fi
+    
+    # 保存5G设置
+    if [ -n "$device_5g" ]; then
+        local val
+        json_get_var val disabled_5g && uci set wireless.default_$device_5g.disabled="$val"
+        json_get_var val ssid_5g && uci set wireless.default_$device_5g.ssid="$val"
+        json_get_var val key_5g && uci set wireless.default_$device_5g.key="$val"
+        json_get_var val channel_5g && uci set wireless.$device_5g.channel="$val"
+        json_get_var val htmode_5g && uci set wireless.$device_5g.htmode="$val"
+        json_get_var val hidden_5g && {
+            if [ "$val" = "true" ] || [ "$val" = "1" ]; then
+                uci set wireless.default_$device_5g.hidden="1"
+            else
+                uci delete wireless.default_$device_5g.hidden 2>/dev/null
+            fi
+        }
+    fi
+    
+    uci commit wireless
+    wifi reload
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "无线设置已保存"
+    json_dump
+}
+
+# 连接WiFi
+connect() {
+    json_load "$1"
+    
+    local ssid encryption key band
+    json_get_var ssid ssid
+    json_get_var encryption encryption
+    json_get_var key key
+    json_get_var band band
+    
+    # 校验密码
+    if [ "$encryption" != "none" ] && [ "$encryption" != "owe" ]; then
+        if ! validate_password "$key"; then
+            json_init
+            json_add_string "status" "error"
+            json_add_string "message" "WiFi密码格式错误：只能使用英文、数字和符号(8-63位)"
+            json_dump
+            return
+        fi
+    fi
+    
+    # 查找STA接口
+    local sta_section=$(get_sta_section)
+    
+    if [ -z "$sta_section" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "未找到STA接口"
+        json_dump
+        return
+    fi
+    
+    # 标准化band格式
+    case "$band" in
+        2g|2G|2.4g|2.4G) band="2g" ;;
+        5g|5G) band="5g" ;;
+    esac
+    
+    # 查找对应频段的设备
+    local target_device
+    for dev in $(uci show wireless | grep "\.band=" | cut -d. -f2); do
+        local dev_band=$(uci get wireless."$dev".band 2>/dev/null)
+        if [ "$dev_band" = "$band" ]; then
+            target_device="$dev"
+            break
+        fi
+    done
+    
+    if [ -z "$target_device" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "未找到对应频段的设备"
+        json_dump
+        return
+    fi
+    
+    # 设置WiFi
+    uci set wireless."$sta_section".device="$target_device"
+    uci set wireless."$sta_section".ssid="$ssid"
+    uci set wireless."$sta_section".encryption="$encryption"
+    uci set wireless."$sta_section".key="$key"
+    uci commit wireless
+    wifi reload
+    
+    log_message "手动连接热点: $ssid 密码: $key 频段: $band 加密: $encryption"
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "WiFi配置已更新"
+    json_dump
+}
+
+# 获取已知热点列表
+get_known_networks() {
+    init_config
+    cat "$CONFIG_FILE"
+}
+
+# 保存热点配置
+save_network() {
+    init_config
+    json_load "$1"
+    
+    local name encryption password band
+    json_get_var name name
+    json_get_var encryption encryption
+    json_get_var password password
+    json_get_var band band
+    
+    # 校验密码
+    if [ "$encryption" != "none" ] && [ "$encryption" != "owe" ]; then
+        if ! validate_password "$password"; then
+            json_init
+            json_add_string "status" "error"
+            json_add_string "message" "WiFi密码格式错误：只能使用英文、数字和符号(8-63位)"
+            json_dump
+            return
+        fi
+    fi
+    
+    local current_time=$(date "+%Y-%m-%d %H:%M:%S")
+    
+    # 使用jq更新配置
+    local tmp_file=$(mktemp)
+    jq --arg name "$name" --arg enc "$encryption" --arg pwd "$password" --arg band "$band" --arg time "$current_time" \
+       'if (.wifi | any(.name == $name)) then
+            .wifi |= map(if .name == $name then .encryption = $enc | .password = $pwd | .band = $band | .last_updated = $time else . end)
+        else
+            .wifi += [{"name": $name, "encryption": $enc, "password": $pwd, "band": $band, "last_updated": $time}]
+        end' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+    
+    log_message "保存热点: $name 密码: $password 频段: $band 加密: $encryption"
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "热点已保存"
+    json_dump
+}
+
+# 删除热点
+delete_networks() {
+    init_config
+    json_load "$1"
+    
+    local names
+    json_get_values names names
+    
+    for name in $names; do
+        local tmp_file=$(mktemp)
+        jq --arg name "$name" 'del(.wifi[] | select(.name == $name))' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+        log_message "删除热点: $name"
+    done
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "热点已删除"
+    json_dump
+}
+
+# 保存排序 (仅更新 wifi 列表，保留其他状态)
+save_order() {
+    init_config
+    
+    # 解析输入
+    local wifi_list=$(echo "$1" | jq -r '.wifi' 2>/dev/null)
+    
+    if [ -z "$wifi_list" ] || [ "$wifi_list" = "null" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "无效的WiFi列表数据"
+        json_dump
+        return
+    fi
+    
+    # 使用 jq 合并数据：将输入的 wifi 数据合并到现有配置文件中，确保不触碰 autowifiranking
+    local tmp_file=$(mktemp)
+    jq --argjson new_wifi "$wifi_list" '.wifi = $new_wifi' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "排序已保存"
+    json_dump
+}
+
+
+# wxpusher推送消息（内置配置）
+# 参数1: 标题(summary)  参数2: 内容(content)
+push_message() {
+    # 检查推送开关
+    [ "$WXPUSHER_ENABLED" != "1" ] && return
+    
+    local summary="$1"
+    local content="$2"
+    
+    # 发送推送
+    local json_data="{\"appToken\":\"$WX_APP_TOKEN\",\"summary\":\"$summary\",\"content\":\"$content\",\"topicId\":$WX_TOPIC_ID,\"uids\":[\"$WX_MY_UID\"]}"
+    curl -s -X POST -H "Content-Type: application/json" \
+        -d "$json_data" \
+        "$WXPUSHER_API_URL" >/dev/null 2>&1
+}
+
+# 自动切换热点
+auto_switch() {
+    init_config
+    
+    # 获取当前连接的热点名称
+    local sta_section=$(get_sta_section)
+    local current_ssid=$(uci get wireless."$sta_section".ssid 2>/dev/null)
+    
+    # 先检查热点数量（必须有2个以上才能切换）
+    local wifi_count=$(jq -r '.wifi | length' "$CONFIG_FILE" 2>/dev/null)
+    
+    if [ -z "$wifi_count" ] || [ "$wifi_count" -eq 0 ]; then
+        log_message "错误：没有已知热点可切换"
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "没有已知热点可切换"
+        json_dump
+        return
+    fi
+    
+    if [ "$wifi_count" -eq 1 ]; then
+        log_message "只有一个热点，无法切换"
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "需要配置2个以上热点才能切换"
+        json_dump
+        return
+    fi
+    
+    # 再检查网络连通性
+    if check_connectivity; then
+        json_init
+        json_add_string "status" "success"
+        json_add_string "message" "$current_ssid 网络正常，无需切换"
+        json_dump
+        return
+    fi
+    
+    log_message "网络不通，开始切换 (当前: $current_ssid)"
+    
+    # 检查STA接口
+    if [ -z "$sta_section" ]; then
+        log_message "错误：未找到STA接口"
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "未找到STA接口"
+        json_dump
+        return
+    fi
+    
+    # 遍历热点尝试连接
+    local i=0
+    while [ $i -lt $wifi_count ]; do
+        local name=$(jq -r ".wifi[$i].name" "$CONFIG_FILE")
+        local encryption=$(jq -r ".wifi[$i].encryption" "$CONFIG_FILE")
+        local password=$(jq -r ".wifi[$i].password" "$CONFIG_FILE")
+        local band=$(jq -r ".wifi[$i].band" "$CONFIG_FILE")
+        local last_updated=$(jq -r ".wifi[$i].last_updated" "$CONFIG_FILE")
+        local wifi_index=$i
+        
+        i=$((i + 1))
+        
+        [ -z "$name" ] || [ "$name" = "null" ] && continue
+        
+        # 跳过当前已连接的热点
+        if [ "$name" = "$current_ssid" ]; then
+            log_message "跳过当前热点: $name"
+            continue
+        fi
+        
+        # 检查是否在冷却时间内（防止短时间重复连接）
+        if [ -n "$last_updated" ] && [ "$last_updated" != "null" ]; then
+            local last_ts=$(date -d "$last_updated" +%s 2>/dev/null)
+            if [ -n "$last_ts" ]; then
+                local now_ts=$(date +%s)
+                local diff=$((now_ts - last_ts))
+                if [ $diff -lt $RETRY_WIFI_INTERVAL ]; then
+                    local remain=$((RETRY_WIFI_INTERVAL - diff))
+                    log_message "跳过 $name: 冷却中，还需等待 ${remain} 秒"
+                    continue
+                fi
+            fi
+        fi
+        
+        # 标准化band格式
+        case "$band" in
+            2g|2G|2.4g|2.4G) band="2g" ;;
+            5g|5G) band="5g" ;;
+        esac
+        
+        # 查找对应频段设备
+        local target_device=""
+        for dev in $(uci show wireless | grep "\.band=" | cut -d. -f2); do
+            local dev_band=$(uci get wireless."$dev".band 2>/dev/null)
+            if [ "$dev_band" = "$band" ]; then
+                target_device="$dev"
+                break
+            fi
+        done
+        
+        if [ -z "$target_device" ]; then
+            log_message "未找到频段 $band 对应的设备，跳过 $name"
+            continue
+        fi
+        
+        log_message "尝试连接: $name (频段: $band, 加密: $encryption)"
+        
+        # 更新last_updated时间戳（防止短时间内重复尝试）
+        local current_time=$(date "+%Y-%m-%d %H:%M:%S")
+        local tmp_file=$(mktemp)
+        jq --arg time "$current_time" --argjson idx "$wifi_index" \
+           '.wifi[$idx].last_updated = $time' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+        
+        # 配置并重启WiFi
+        uci set wireless."$sta_section".device="$target_device"
+        uci set wireless."$sta_section".ssid="$name"
+        uci set wireless."$sta_section".encryption="$encryption"
+        uci set wireless."$sta_section".key="$password"
+        uci commit wireless
+        wifi reload
+        
+        # 核心逻辑修改：统计 SWITCH_COUNT (wifi reload 次数)
+        # 只要执行了 wifi reload，无论后续连接成功与否，都要累加计数
+        # 这是为了准确追踪无线驱动被重置的次数，防范累积性故障
+        local switch_count=$(jq -r '.autowifiranking[0].CQ_TIMES' "$CONFIG_FILE" 2>/dev/null || echo "0")
+        switch_count=$((switch_count + 1))
+        local tmp_count=$(mktemp)
+        jq --arg value "$switch_count" '.autowifiranking[0].CQ_TIMES = ($value | tonumber)' "$CONFIG_FILE" > "$tmp_count" && mv "$tmp_count" "$CONFIG_FILE"
+        log_message "WiFi配置已应用，累计切换次数: $switch_count"
+        
+        log_message "等待设备就绪..."
+        
+        # 等待设备名称获取
+        local sta_ifname=""
+        local retry=0
+        while [ $retry -lt $AUTO_SWITCH_MAX_RETRIES ]; do
+            sleep $((CHECK_WAIT_TIME + 1))
+            sta_ifname=$(ubus call network.interface."$STA_NETWORK" status 2>/dev/null | jsonfilter -e '@.device' 2>/dev/null)
+            if [ -n "$sta_ifname" ]; then
+                log_message "获取到设备名称: $sta_ifname"
+                break
+            fi
+            retry=$((retry + 1))
+            log_message "等待设备名称... ($retry/$AUTO_SWITCH_MAX_RETRIES)"
+        done
+        
+        if [ -z "$sta_ifname" ]; then
+            log_message "获取设备名称失败，尝试下一个热点"
+            continue
+        fi
+        
+        # 等待WiFi连接
+        retry=0
+        local connected=0
+        log_message "等待WiFi连接..."
+        while [ $retry -lt $AUTO_SWITCH_MAX_RETRIES ]; do
+            sleep $CHECK_WAIT_TIME
+            local wifi_state=$(iwinfo "$sta_ifname" info 2>/dev/null | grep -o 'ESSID: "[^"]*"' | cut -d'"' -f2)
+            if [ "$wifi_state" = "$name" ]; then
+                connected=1
+                log_message "WiFi连接成功: $name"
+                break
+            fi
+            retry=$((retry + 1))
+            log_message "等待WiFi连接... ($retry/$AUTO_SWITCH_MAX_RETRIES)"
+        done
+        
+        if [ $connected -eq 0 ]; then
+            log_message "WiFi连接失败: $name，尝试下一个热点"
+            continue
+        fi
+        
+        # 检查网络连通性
+        retry=0
+        log_message "检测网络连通性..."
+        while [ $retry -lt $AUTO_SWITCH_MAX_RETRIES ]; do
+            sleep $CHECK_WAIT_TIME
+            if check_connectivity; then
+                log_message "网络已连通！切换成功: $name"
+                # 注意：切换成功不清零计数，因为 wifi reload 本身就有累积副作用
+                
+                # 发送推送通知
+                local device_name=$(uci get system.@system[0].hostname 2>/dev/null || echo "路由器")
+                push_message "[$device_name] 通知" "已切换到 $name，网络已恢复正常"
+                
+                json_init
+                json_add_string "status" "success"
+                json_add_string "message" "已切换到 $name"
+                json_dump
+                return
+            fi
+            retry=$((retry + 1))
+            log_message "网络检测... ($retry/$AUTO_SWITCH_MAX_RETRIES)"
+        done
+        
+        log_message "网络不通: $name，尝试下一个热点"
+    done
+    
+    # 统计并检查自动重启
+    local switch_count=$(jq -r '.autowifiranking[0].CQ_TIMES' "$CONFIG_FILE" 2>/dev/null || echo "0")
+    
+    log_message "自动切换循环结束，当前累计切换次数: $switch_count/$RESTART_THRESHOLD"
+    
+    # 检查是否达到重启阈值
+    if [ "$switch_count" -ge "$RESTART_THRESHOLD" ]; then
+        log_message "⚠️ 累计切换次数达到阈值($switch_count/$RESTART_THRESHOLD)，执行自动重启以恢复无线网卡状态"
+        
+        # 重置切换计数
+        local temp_reboot=$(mktemp)
+        jq '.autowifiranking[0].CQ_TIMES = 0' "$CONFIG_FILE" > "$temp_reboot" && mv "$temp_reboot" "$CONFIG_FILE"
+        
+        # 缓冲一段时间后重启
+        ( sleep "$REBOOT_DELAY_TIME" && reboot ) &
+        
+        json_init
+        json_add_string "status" "warning"
+        json_add_string "message" "累计且频繁切换次数过多，系统即将自动重启以保护设备"
+        json_dump
+        return
+    fi
+    
+    json_init
+    json_add_string "status" "error"
+    json_add_string "message" "所有热点尝试失败"
+    json_dump
+}
+
+# 获取日志
+get_log() {
+    json_load "$1"
+    local lines=""
+    json_get_var lines lines
+    
+    # 默认返回最后50行
+    [ -z "$lines" ] && lines=50
+    
+    if [ ! -f "$LOG_FILE" ]; then
+        json_init
+        json_add_string "status" "success"
+        json_add_string "log" ""
+        json_dump
+        return
+    fi
+    
+    local log_content=$(tail -n "$lines" "$LOG_FILE" 2>/dev/null)
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "log" "$log_content"
+    json_dump
+}
+
+# 清空日志
+clear_log() {
+    echo "" > "$LOG_FILE"
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "日志已清空"
+    json_dump
+}
+
+
+
+# RPC方法列表
+# 获取重试状态
+get_retry_status() {
+    init_config
+    
+    # 从配置文件读取重试状态
+    local cq_times
+    
+    cq_times=$(jq -r '.autowifiranking[0].CQ_TIMES' "$CONFIG_FILE" 2>/dev/null || echo "0")
+    
+    json_init
+    json_add_int "cq_times" "$cq_times"
+    json_add_int "max_retries" "$AUTO_SWITCH_MAX_RETRIES"
+    json_add_int "restart_threshold" "$RESTART_THRESHOLD"
+    json_dump
+}
+
+# 重置重试计数
+reset_retry_count() {
+    init_config
+    
+    # 重置配置文件中的CQ_TIMES为0
+    local temp_file=$(mktemp)
+    jq '.autowifiranking[0].CQ_TIMES = 0' "$CONFIG_FILE" > "$temp_file"
+    mv "$temp_file" "$CONFIG_FILE"
+    
+    log_message "重试计数已重置为0"
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "重试计数已重置"
+    json_dump
+}
+
+case "$1" in
+    list)
+        echo '{"get_status":{},"get_wireless_settings":{},"save_wireless_settings":{"settings":"object"},"connect":{"ssid":"string","encryption":"string","key":"string","band":"string"},"get_known_networks":{},"save_network":{"name":"string","encryption":"string","password":"string","band":"string"},"delete_networks":{"names":"array"},"save_order":{"wifi":"array"},"auto_switch":{},"get_log":{"lines":"number"},"clear_log":{},"get_retry_status":{},"reset_retry_count":{}}'
+        ;;
+    call)
+        case "$2" in
+            get_status) get_status ;;
+            get_wireless_settings) get_wireless_settings ;;
+            save_wireless_settings) save_wireless_settings "$3" ;;
+            connect) connect "$3" ;;
+            get_known_networks) get_known_networks ;;
+            save_network) save_network "$3" ;;
+            delete_networks) delete_networks "$3" ;;
+            save_order) save_order "$3" ;;
+            auto_switch) auto_switch ;;
+            get_log) get_log "$3" ;;
+            clear_log) clear_log ;;
+            get_retry_status) get_retry_status ;;
+            reset_retry_count) reset_retry_count ;;
+        esac
+        ;;
+esac
+
