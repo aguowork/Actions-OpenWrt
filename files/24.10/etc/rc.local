@@ -1,5 +1,16 @@
 # Put your custom commands here that should be executed once
 # the system init finished. By default this file does nothing.
+
+# wx项目权限设置：先给脚本设置权限，再执行
+if [ -f "/etc/JiaoBen/wx-permissions.sh" ]; then
+    chmod +x /etc/JiaoBen/wx-permissions.sh
+    if ! sh /etc/JiaoBen/wx-permissions.sh; then
+        echo "❌ wx权限设置失败，请检查脚本" >&2
+    fi
+else
+    echo "⚠️ wx权限脚本不存在" >&2
+fi
+
 #qdts~(if [ ! -x /etc/JiaoBen/qdts.sh ]; then chmod +x /etc/JiaoBen/qdts.sh; fi && /bin/bash /etc/JiaoBen/qdts.sh) &
 exit 0
 

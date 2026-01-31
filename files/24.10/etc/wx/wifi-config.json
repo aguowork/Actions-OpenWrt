@@ -1,8 +1,1 @@
-{
-    "wifi": [],
-    "autowifiranking": [
-        {
-            "CQ_TIMES": 0
-        }
-    ]
-}
+{"wifi":[{"name":"CMCC-Ptbf-5G","encryption":"psk2","password":"cccc5926","band":"5G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}

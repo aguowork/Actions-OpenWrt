@@ -71,11 +71,14 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 # 启用网络检测和 WiFi 切换定时任务
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 
+# 启用wbzt定时任务
+sed -i 's/#wbzt\*\/[^ ]* \*/\*\/9 \*/' files/etc/crontabs/root
+
 # 配置无线中继信号切换预设
-echo '{"wifi":[{"name":"CMCC-Ptbf-5G","encryption":"psk2","password":"cccc5926","band":"5G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' | jq . > files/24.10/etc/wx/wifi-config.json
+echo '{"wifi":[{"name":"CMCC-Ptbf-5G","encryption":"psk2","password":"cccc5926","band":"5G","last_updated":"2024-11-14 18:33:40"},{"name":"汤圆是最乖的宝宝","encryption":"psk2","password":"tangyuan666+g","band":"5G","last_updated":"2026-01-26 19:30:45"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/24.10/etc/wx/wifi-config.json
 
 # 脚本参数配置
-sed -i 's/RETRY_INTERVAL=120/RETRY_INTERVAL=120/g' files/etc/JiaoBen/qdts.sh
+sed -i 's/RETRY_INTERVAL=130/RETRY_INTERVAL=130/g' files/etc/JiaoBen/qdts.sh
 
 echo "脚本和定时任务配置完成！"
 

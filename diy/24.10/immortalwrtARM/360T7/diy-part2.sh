@@ -72,11 +72,10 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 
 # 配置无线中继信号切换预设
-echo '{"wifi":[{"name":"Hjx","encryption":"psk2","password":"HjxWpy2580","band":"2G","last_updated":"2021-01-03 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' | jq . > files/24.10/etc/wx/wifi-config.json
+echo '{"wifi":[{"name":"Hjx","encryption":"psk2","password":"HjxWpy2580","band":"2G","last_updated":"2021-01-03 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/24.10/etc/wx/wifi-config.json
 
 # 脚本参数配置
-sed -i 's/RETRY_INTERVAL=120/RETRY_INTERVAL=120/g' files/etc/JiaoBen/qdts.sh
-
+sed -i 's/RETRY_INTERVAL=130/RETRY_INTERVAL=130/g' files/etc/JiaoBen/qdts.sh
 
 echo "脚本和定时任务配置完成！"
 
