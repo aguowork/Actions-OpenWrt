@@ -75,7 +75,7 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 
 # 配置无线中继信号切换预设
-echo '{"wifi":[{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"Tenda_1F5600","encryption":"psk2","password":"qwer15207556371asdf","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"b1403","encryption":"psk2","password":"13539012490","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/24.10/etc/wx/wifi-config.json
+echo '{"wifi":[{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"Tenda_1F5600","encryption":"psk2","password":"qwer15207556371asdf","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"b1403","encryption":"psk2","password":"13539012490","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/etc/wx/wifi-config.json
 
 # 脚本参数配置
 sed -i 's/RETRY_INTERVAL=130/RETRY_INTERVAL=130/g' files/etc/JiaoBen/qdts.sh
@@ -97,6 +97,17 @@ sed -i "s/option index '.*'/option index '1'/g" feeds/nas/network/services/ddnst
 sed -i "s/option device_name '.*'/option device_name 'SR1041ZT'/g" feeds/luci/applications/luci-app-wechatpush/root/etc/config/wechatpush
 
 echo "插件配置完成！"
+
+# ============================================
+# wx项目权限设置（确保编译后立即可用）
+# ============================================
+
+echo "设置wx项目脚本执行权限..."
+chmod +x files/www/cgi-bin/wx-auth.sh 2>/dev/null || true
+chmod +x files/usr/libexec/rpcd/wx-wireless 2>/dev/null || true
+chmod +x files/etc/wx/uninstall.sh 2>/dev/null || true
+echo "wx项目权限设置完成！"
+
 echo "=========================================="
 echo "diy-part2.sh 全部执行完成！"
 echo "=========================================="

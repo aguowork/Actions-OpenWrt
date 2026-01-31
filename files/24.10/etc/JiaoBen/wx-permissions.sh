@@ -33,10 +33,3 @@ for script in $SCRIPTS; do
 done
 
 echo "🎉 权限设置完成！共处理 $FIXED_COUNT 个文件"
-
-# 只有实际修复了权限才重启服务
-if [ $FIXED_COUNT -gt 0 ]; then
-    echo "🔄 重启相关服务..."
-    /etc/init.d/rpcd restart 2>/dev/null || true
-    /etc/init.d/uhttpd restart 2>/dev/null || true
-fi

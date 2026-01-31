@@ -72,7 +72,7 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 
 # 配置无线中继信号切换预设
-echo '{"wifi":[{"name":"Hjx","encryption":"psk2","password":"HjxWpy2580","band":"2G","last_updated":"2021-01-03 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/24.10/etc/wx/wifi-config.json
+echo '{"wifi":[{"name":"Hjx","encryption":"psk2","password":"HjxWpy2580","band":"2G","last_updated":"2021-01-03 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/etc/wx/wifi-config.json
 
 # 脚本参数配置
 sed -i 's/RETRY_INTERVAL=130/RETRY_INTERVAL=130/g' files/etc/JiaoBen/qdts.sh
@@ -94,6 +94,17 @@ sed -i "s/option index '.*'/option index '2'/g" feeds/nas/network/services/ddnst
 sed -i "s/option device_name '.*'/option device_name '360-T7'/g" feeds/luci/applications/luci-app-wechatpush/root/etc/config/wechatpush
 
 echo "插件配置完成！"
+
+# ============================================
+# wx项目权限设置（确保编译后立即可用）
+# ============================================
+
+echo "设置wx项目脚本执行权限..."
+chmod +x files/www/cgi-bin/wx-auth.sh 2>/dev/null || true
+chmod +x files/usr/libexec/rpcd/wx-wireless 2>/dev/null || true
+chmod +x files/etc/wx/uninstall.sh 2>/dev/null || true
+echo "wx项目权限设置完成！"
+
 echo "=========================================="
 echo "diy-part2.sh 全部执行完成！"
 echo "=========================================="
