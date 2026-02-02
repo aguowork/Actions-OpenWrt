@@ -6,31 +6,27 @@
 
 . /usr/share/libubox/jshn.sh # 加载jshn库
 
-CONFIG_DIR="/etc/wx"                          # 配置文件根目录
-CONFIG_FILE="$CONFIG_DIR/wifi-config.json"   # 配置文件路径
-LOG_FILE="$CONFIG_DIR/wx-wireless.log"       # 日志文件路径
-MAX_LOG_SIZE=102400                          # 日志文件最大大小 (Bytes)，超过则自动轮转
+# --- 基础路径配置 ---
+CONFIG_DIR="/etc/wx"
+CONFIG_FILE="$CONFIG_DIR/wifi-config.json"
+LOG_FILE="$CONFIG_DIR/wx-wireless.log"
+SETTINGS_FILE="$CONFIG_DIR/wx_settings.conf"
 
-# --- 网络连通性检测 ---
-PING_TARGET="223.5.5.5"                      # 用于检测网络通断的 IP 目标
+# === 硬编码配置 (不开放给前端配置) ===
+TOKEN_EXPIRY=3600                     # 登录Token有效期 (秒)
+MAX_FAIL=10                           # 密码错误锁定次数
+LOCK_TIME=3600                        # 锁定时长 (秒)
+SHOW_WXPUSHER=0                       # 显示消息推送配置 (1=显示, 0=隐藏)
+MAX_LOG_SIZE=102400                   # 日志最大大小 (Bytes)
+CHECK_WAIT_TIME=3                     # 检测循环等待间隔 (秒)
+REBOOT_DELAY_TIME=3                   # 触发重启前的缓冲时间 (秒)
 
-# --- WxPusher 推送配置 ---
-WXPUSHER_ENABLED=1                                # 推送开关 (1=开启, 0=关闭)
-WX_APP_TOKEN="AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6" # WxPusher APP_TOKEN
-WX_MY_UID="UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"      # WxPusher 用户 UID
-WX_TOPIC_ID=0                                     # WxPusher 主题 ID (0表示不使用主题)
-WXPUSHER_API_URL="https://wxpusher.zjiecode.com/api/send/message" # WxPusher API地址
-
-# --- 自动切换热点配置 ---
-STA_NETWORK="wwan"                          # 无线接口所属的网络名称 (如: wwan)
-CHECK_WAIT_TIME=3                            # 循环检测中的等待间隔 (秒)
-AUTO_SWITCH_MAX_RETRIES=25                   # 自动连接/网络检测的最大重试次数
-RETRY_WIFI_INTERVAL=688                      # 相同热点重试的间隔冷却时间 (秒)
-RESTART_THRESHOLD=10                         # 累计切换失败次数达到此值后自动重启系统
-REBOOT_DELAY_TIME=3                          # 触发重启前的缓冲时间 (秒)
-
-
-
+# 加载用户配置文件
+if [ ! -f "$SETTINGS_FILE" ]; then
+    echo '{"error":"配置文件不存在: '"$SETTINGS_FILE"'"}'
+    exit 1
+fi
+. "$SETTINGS_FILE"
 
 
 # 日志记录函数（带自动轮转）
@@ -66,9 +62,9 @@ check_connectivity() {
     return $?
 }
 
-# 获取无线 STA 配置段名称
+# 获取无线 STA 配置段名称（兼容mode=sta和mode='sta'两种格式）
 get_sta_section() {
-    uci show wireless | grep "mode='sta'" | head -1 | cut -d. -f2
+    uci show wireless | grep -E "mode='?sta'?" | head -1 | cut -d. -f2
 }
 
 # 校验 WiFi 密码 (只允许可见 ASCII 字符, 8-63位)
@@ -86,34 +82,105 @@ validate_password() {
     return 0
 }
 
+# 动态获取唯一STA接口的network名称
+# 使用jsonfilter方式，性能更好
+# 返回: 成功返回network名(如wwan)，失败返回空
+# 全局变量 STA_NETWORK_COUNT 记录STA接口数量
+get_single_sta_network() {
+    local wireless_status=$(ubus call network.wireless status 2>/dev/null)
+    
+    # 统计STA接口数量
+    STA_NETWORK_COUNT=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]' 2>/dev/null | grep -c '"section"')
+    
+    if [ "$STA_NETWORK_COUNT" -eq 1 ]; then
+        # 只有1个STA时返回其network名称
+        echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].config.network[0]' 2>/dev/null
+    fi
+}
+
 # 获取无线状态
 get_status() {
     local sta_info sta_ssid sta_key sta_band sta_network sta_ifname bridge_status network_status
+    local wireless_status sta_count relay_enabled sta_section
     
-    # 获取STA接口信息
-    sta_info=$(ubus call network.wireless status 2>/dev/null | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]')
+    # 获取wireless状态并统计STA接口数量
+    wireless_status=$(ubus call network.wireless status 2>/dev/null)
+    sta_count=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]' 2>/dev/null | grep -c '"section"')
     
-    if [ -z "$sta_info" ]; then
-        echo '{"error": "未找到STA接口"}'
+    # 获取所有STA接口信息
+    local all_sta_info=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]' 2>/dev/null)
+    
+    # 判断中继是否开启
+    if [ "$sta_count" -gt 0 ]; then
+        relay_enabled=1
+    else
+        relay_enabled=0
+    fi
+    
+    # 无STA接口时返回基本状态（不报错）
+    if [ -z "$all_sta_info" ]; then
+        json_init
+        json_add_string "ssid" ""
+        json_add_string "key" ""
+        json_add_string "band" ""
+        json_add_string "interface" ""
+        json_add_string "bridge_status" "未配置"
+        json_add_string "network_status" "未配置"
+        json_add_string "signal" ""
+        json_add_int "sta_count" 0
+        json_add_boolean "relay_enabled" 0
+        json_add_string "sta_section" ""
+        json_dump
         return
     fi
+    
+    # 多STA时优先选择up=true的接口
+    sta_info=""
+    if [ "$sta_count" -gt 1 ]; then
+        # 逐行遍历每个STA，找到up=true的
+        echo "$all_sta_info" | while IFS= read -r line; do
+            local net=$(echo "$line" | jsonfilter -e '@.config.network[0]' 2>/dev/null)
+            if [ -n "$net" ]; then
+                local up=$(ubus call network.interface."$net" status 2>/dev/null | jsonfilter -e '@.up' 2>/dev/null)
+                if [ "$up" = "true" ]; then
+                    echo "$line"
+                    break
+                fi
+            fi
+        done > /tmp/wx_active_sta.$$
+        
+        if [ -s /tmp/wx_active_sta.$$ ]; then
+            sta_info=$(cat /tmp/wx_active_sta.$$)
+            rm -f /tmp/wx_active_sta.$$
+        fi
+    fi
+    
+    # 如果没找到活跃的，使用第一行
+    [ -z "$sta_info" ] && sta_info=$(echo "$all_sta_info" | head -1)
     
     sta_ssid=$(echo "$sta_info" | jsonfilter -e '@.config.ssid' 2>/dev/null)
     sta_key=$(echo "$sta_info" | jsonfilter -e '@.config.key' 2>/dev/null)
     sta_network=$(echo "$sta_info" | jsonfilter -e '@.config.network[0]' 2>/dev/null)
     sta_ifname=$(echo "$sta_info" | jsonfilter -e '@.ifname' 2>/dev/null)
+    sta_section=$(echo "$sta_info" | jsonfilter -e '@.section' 2>/dev/null)
     
     # 获取频段 - 通过iwinfo获取频率判断
-    local freq=$(iwinfo "$sta_ifname" info 2>/dev/null | awk '/Channel/{print $4}' | tr -d '()')
-    if [ -n "$freq" ]; then
-        if [ "$freq" -gt 5000 ] 2>/dev/null; then
+    # iwinfo输出格式: "Mode: Client  Channel: 40 (5.200 GHz)  HT Mode: NOHT"
+    # 需要提取括号内的频率值(如5.200或5)，转换为MHz后判断
+    local freq_ghz=$(iwinfo "$sta_ifname" info 2>/dev/null | grep -oE '\([0-9]+\.?[0-9]* GHz\)' | head -1 | grep -oE '[0-9]+\.?[0-9]*')
+    if [ -n "$freq_ghz" ]; then
+        # 将GHz转换为MHz进行比较（去掉小数点，如5.200变为5200）
+        local freq_mhz=$(echo "$freq_ghz" | awk '{printf "%.0f", $1 * 1000}')
+        if [ "$freq_mhz" -gt 5000 ] 2>/dev/null; then
             sta_band="5G"
         else
             sta_band="2.4G"
         fi
     else
-        # 备用方案：通过设备配置获取
-        local device=$(echo "$sta_info" | jsonfilter -e '@.config.device' 2>/dev/null)
+        # 备用方案：通过UCI配置获取设备的band
+        # 先获取section名(如wifinet2)，再从UCI查对应的device，最后获取device的band
+        local section=$(echo "$sta_info" | jsonfilter -e '@.section' 2>/dev/null)
+        local device=$(uci get wireless."$section".device 2>/dev/null)
         local band_cfg=$(uci get wireless."$device".band 2>/dev/null)
         case "$band_cfg" in
             2g) sta_band="2.4G" ;;
@@ -155,6 +222,9 @@ get_status() {
     json_add_string "bridge_status" "$bridge_status"
     json_add_string "network_status" "$network_status"
     json_add_string "signal" "${signal:-unknown}"
+    json_add_int "sta_count" "$sta_count"
+    json_add_boolean "relay_enabled" "$relay_enabled"
+    json_add_string "sta_section" "${sta_section:-}"
     json_dump
 }
 
@@ -283,7 +353,7 @@ save_wireless_settings() {
     fi
     
     uci commit wireless
-    wifi reload
+    wifi
     
     json_init
     json_add_string "status" "success"
@@ -312,17 +382,6 @@ connect() {
         fi
     fi
     
-    # 查找STA接口
-    local sta_section=$(get_sta_section)
-    
-    if [ -z "$sta_section" ]; then
-        json_init
-        json_add_string "status" "error"
-        json_add_string "message" "未找到STA接口"
-        json_dump
-        return
-    fi
-    
     # 标准化band格式
     case "$band" in
         2g|2G|2.4g|2.4G) band="2g" ;;
@@ -347,15 +406,53 @@ connect() {
         return
     fi
     
-    # 设置WiFi
-    uci set wireless."$sta_section".device="$target_device"
-    uci set wireless."$sta_section".ssid="$ssid"
-    uci set wireless."$sta_section".encryption="$encryption"
-    uci set wireless."$sta_section".key="$key"
-    uci commit wireless
-    wifi reload
+    # 查找STA接口
+    local sta_section=$(get_sta_section)
     
-    log_message "手动连接热点: $ssid 密码: $key 频段: $band 加密: $encryption"
+    # 如果没有STA接口，自动创建中继模式
+    if [ -z "$sta_section" ]; then
+        log_message "未找到STA接口，自动创建中继模式"
+        sta_section="wifinet_sta"
+        
+        # 1. 创建无线STA接口
+        uci set wireless.wifinet_sta=wifi-iface
+        uci set wireless.wifinet_sta.device="$target_device"
+        uci set wireless.wifinet_sta.mode='sta'
+        uci set wireless.wifinet_sta.network='wwan'
+        uci set wireless.wifinet_sta.ssid="$ssid"
+        uci set wireless.wifinet_sta.encryption="$encryption"
+        [ -n "$key" ] && uci set wireless.wifinet_sta.key="$key"
+        
+        # 2. 创建网络接口
+        uci set network.wwan=interface
+        uci set network.wwan.proto='dhcp'
+        
+        # 3. 动态获取WAN zone并添加wwan
+        local wan_zone=$(uci show firewall | grep "name='wan'" | head -1 | cut -d. -f2)
+        [ -z "$wan_zone" ] && wan_zone="@zone[1]"
+        uci add_list firewall."$wan_zone".network='wwan'
+        
+        # 4. 提交并应用
+        uci commit wireless
+        uci commit network
+        uci commit firewall
+        
+        # 5. 重载网络
+        wifi
+        /etc/init.d/network reload
+        
+        log_message "中继模式已自动创建并连接: $ssid"
+    else
+        # STA接口已存在，直接更新配置
+        uci set wireless."$sta_section".device="$target_device"
+        uci set wireless."$sta_section".ssid="$ssid"
+        uci set wireless."$sta_section".encryption="$encryption"
+        uci set wireless."$sta_section".key="$key"
+        uci commit wireless
+        wifi
+        
+        log_message "手动连接热点: $ssid 密码: $key 频段: $band 加密: $encryption"
+    fi
     
     json_init
     json_add_string "status" "success"
@@ -466,7 +563,7 @@ push_message() {
     local content="$2"
     
     # 发送推送
-    local json_data="{\"appToken\":\"$WX_APP_TOKEN\",\"summary\":\"$summary\",\"content\":\"$content\",\"topicId\":$WX_TOPIC_ID,\"uids\":[\"$WX_MY_UID\"]}"
+    local json_data="{\"appToken\":\"$WX_APP_TOKEN\",\"summary\":\"$summary\",\"content\":\"$content\",\"uids\":[\"$WX_MY_UID\"]}"
     curl -s -X POST -H "Content-Type: application/json" \
         -d "$json_data" \
         "$WXPUSHER_API_URL" >/dev/null 2>&1
@@ -475,6 +572,28 @@ push_message() {
 # 自动切换热点
 auto_switch() {
     init_config
+    
+    # 动态获取STA接口的network名称
+    local sta_network=$(get_single_sta_network)
+    
+    # 检查STA接口数量
+    if [ "$STA_NETWORK_COUNT" -eq 0 ]; then
+        log_message "错误：未检测到STA接口"
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "未检测到STA接口"
+        json_dump
+        return
+    fi
+    
+    if [ "$STA_NETWORK_COUNT" -gt 1 ]; then
+        log_message "错误：检测到多个STA接口($STA_NETWORK_COUNT个)，请删除多余接口"
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "检测到${STA_NETWORK_COUNT}个STA接口，请删除多余接口"
+        json_dump
+        return
+    fi
     
     # 获取当前连接的热点名称
     local sta_section=$(get_sta_section)
@@ -544,7 +663,9 @@ auto_switch() {
         
         # 检查是否在冷却时间内（防止短时间重复连接）
         if [ -n "$last_updated" ] && [ "$last_updated" != "null" ]; then
-            local last_ts=$(date -d "$last_updated" +%s 2>/dev/null)
+            # 将 "2025-06-10 12:30:45" 转换为 busybox 兼容格式 "2025-06-10T12:30:45"
+            local last_updated_iso=$(echo "$last_updated" | sed 's/ /T/')
+            local last_ts=$(date -d "$last_updated_iso" +%s 2>/dev/null)
             if [ -n "$last_ts" ]; then
                 local now_ts=$(date +%s)
                 local diff=$((now_ts - last_ts))
@@ -591,9 +712,9 @@ auto_switch() {
         uci set wireless."$sta_section".encryption="$encryption"
         uci set wireless."$sta_section".key="$password"
         uci commit wireless
-        wifi reload
+        wifi
         
-        # 核心逻辑修改：统计 SWITCH_COUNT (wifi reload 次数)
+        # 核心逻辑修改：统计 SWITCH_COUNT (wifi 重载次数)
         # 只要执行了 wifi reload，无论后续连接成功与否，都要累加计数
         # 这是为了准确追踪无线驱动被重置的次数，防范累积性故障
         local switch_count=$(jq -r '.autowifiranking[0].CQ_TIMES' "$CONFIG_FILE" 2>/dev/null || echo "0")
@@ -609,7 +730,7 @@ auto_switch() {
         local retry=0
         while [ $retry -lt $AUTO_SWITCH_MAX_RETRIES ]; do
             sleep $((CHECK_WAIT_TIME + 1))
-            sta_ifname=$(ubus call network.interface."$STA_NETWORK" status 2>/dev/null | jsonfilter -e '@.device' 2>/dev/null)
+            sta_ifname=$(ubus call network.interface."$sta_network" status 2>/dev/null | jsonfilter -e '@.device' 2>/dev/null)
             if [ -n "$sta_ifname" ]; then
                 log_message "获取到设备名称: $sta_ifname"
                 break
@@ -857,7 +978,7 @@ scan_wifi() {
     ' | tee "$cache_file"
 }
 
-# 获取缓存的扫描结果（10分钟有效期）
+# 获取缓存的扫描结果（永久有效，返回扫描时间让用户自行判断）
 get_cached_scan() {
     json_load "$1"
     
@@ -870,24 +991,259 @@ get_cached_scan() {
     esac
     
     local cache_file="/tmp/wifi_scan_${cache_band}.json"
-    local cache_max_age=600  # 10分钟 = 600秒
     
     if [ -f "$cache_file" ]; then
-        local file_age=$(($(date +%s) - $(date -r "$cache_file" +%s 2>/dev/null || echo 0)))
-        if [ "$file_age" -lt "$cache_max_age" ]; then
-            cat "$cache_file"
-        else
-            # 缓存过期
-            echo '{"results":[],"expired":true}'
-        fi
+        # 获取文件修改时间作为扫描时间
+        local scan_time=$(date -r "$cache_file" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "")
+        local cache_content=$(cat "$cache_file" | tr -d '\n')
+        # 注入扫描时间到JSON（移除换行符确保匹配）
+        echo "$cache_content" | sed 's/}$/,"scan_time":"'"$scan_time"'"}/'
     else
         echo '{"results":[]}'
     fi
 }
 
+# 获取系统配置
+get_settings() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "配置文件不存在"
+        json_dump
+        return
+    fi
+    
+    json_init
+    json_add_string "status" "success"
+    
+    # WxPusher 推送配置
+    json_add_int "wxpusher_enabled" "$WXPUSHER_ENABLED"
+    json_add_string "wx_app_token" "$WX_APP_TOKEN"
+    json_add_string "wx_my_uid" "$WX_MY_UID"
+    json_add_string "wxpusher_api_url" "$WXPUSHER_API_URL"
+    
+    # 网络检测配置
+    json_add_string "ping_target" "$PING_TARGET"
+    
+    # 自动切换配置
+    json_add_int "auto_switch_max_retries" "$AUTO_SWITCH_MAX_RETRIES"
+    json_add_int "retry_wifi_interval" "$RETRY_WIFI_INTERVAL"
+    json_add_int "restart_threshold" "$RESTART_THRESHOLD"
+    
+    # 系统配置
+    json_add_int "show_wxpusher" "${SHOW_WXPUSHER:-0}"
+    
+    json_dump
+}
+
+# 保存系统配置
+save_settings() {
+    json_load "$1"
+    
+    # 读取所有配置值
+    local wxpusher_enabled wx_app_token wx_my_uid wxpusher_api_url
+    local ping_target auto_switch_max_retries
+    local retry_wifi_interval restart_threshold
+    
+    json_get_var wxpusher_enabled wxpusher_enabled
+    json_get_var wx_app_token wx_app_token
+    json_get_var wx_my_uid wx_my_uid
+    json_get_var wxpusher_api_url wxpusher_api_url
+    json_get_var ping_target ping_target
+    json_get_var auto_switch_max_retries auto_switch_max_retries
+    json_get_var retry_wifi_interval retry_wifi_interval
+    json_get_var restart_threshold restart_threshold
+    
+    # 写入配置文件
+    cat > "$SETTINGS_FILE" << EOF
+# ============================================================
+# WX-Wireless 配置文件
+# 路径: /etc/wx/wx_settings.conf
+# 修改后无需重启，脚本会自动加载
+# ============================================================
+
+# === WxPusher 微信推送配置 ===
+# 获取方式: https://wxpusher.zjiecode.com/admin/login
+WXPUSHER_ENABLED=${wxpusher_enabled:-0}                    # 推送开关 (1=开启, 0=关闭)
+WX_APP_TOKEN="${wx_app_token}"  # 应用Token
+WX_MY_UID="${wx_my_uid}"       # 用户UID
+WXPUSHER_API_URL="${wxpusher_api_url:-https://wxpusher.zjiecode.com/api/send/message}"
+
+# === 网络检测配置 ===
+PING_TARGET="${ping_target:-223.5.5.5}"               # 网络连通性检测IP
+
+# === 自动切换配置 ===
+AUTO_SWITCH_MAX_RETRIES=${auto_switch_max_retries:-25}            # 连接/检测最大重试次数
+RETRY_WIFI_INTERVAL=${retry_wifi_interval:-688}               # 相同热点重试冷却时间 (秒)
+RESTART_THRESHOLD=${restart_threshold:-10}                  # 累计失败后自动重启阈值
+
+EOF
+    
+    # 重新加载配置
+    . "$SETTINGS_FILE"
+    
+    log_message "系统配置已更新"
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "配置已保存"
+    json_dump
+}
+
+# 开启中继模式
+enable_relay() {
+    json_load "$1"
+    
+    local ssid key encryption band
+    json_get_var ssid ssid
+    json_get_var key key
+    json_get_var encryption encryption
+    json_get_var band band
+    
+    # 默认值
+    [ -z "$encryption" ] && encryption="psk2"
+    [ -z "$band" ] && band="5g"
+    
+    # 标准化band格式
+    case "$band" in
+        2g|2G|2.4g|2.4G) band="2g" ;;
+        5g|5G) band="5g" ;;
+    esac
+    
+    # 检查是否已有STA接口
+    local sta_count=$(ubus call network.wireless status 2>/dev/null | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]' 2>/dev/null | grep -c '"section"')
+    if [ "$sta_count" -gt 0 ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "中继模式已开启，请先关闭现有中继"
+        json_dump
+        return
+    fi
+    
+    # 校验参数
+    if [ -z "$ssid" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "请输入WiFi名称"
+        json_dump
+        return
+    fi
+    
+    if [ "$encryption" != "none" ] && [ "$encryption" != "owe" ]; then
+        if ! validate_password "$key"; then
+            json_init
+            json_add_string "status" "error"
+            json_add_string "message" "WiFi密码格式错误：只能使用英文、数字和符号(8-63位)"
+            json_dump
+            return
+        fi
+    fi
+    
+    # 动态获取对应频段的设备
+    local target_device
+    for dev in $(uci show wireless | grep "\.band=" | cut -d. -f2); do
+        local dev_band=$(uci get wireless."$dev".band 2>/dev/null)
+        if [ "$dev_band" = "$band" ]; then
+            target_device="$dev"
+            break
+        fi
+    done
+    
+    if [ -z "$target_device" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "未找到对应频段的设备"
+        json_dump
+        return
+    fi
+    
+    log_message "开启中继模式: SSID=$ssid 频段=$band 设备=$target_device"
+    
+    # 1. 创建无线STA接口
+    uci set wireless.wifinet_sta=wifi-iface
+    uci set wireless.wifinet_sta.device="$target_device"
+    uci set wireless.wifinet_sta.mode='sta'
+    uci set wireless.wifinet_sta.network='wwan'
+    uci set wireless.wifinet_sta.ssid="$ssid"
+    uci set wireless.wifinet_sta.encryption="$encryption"
+    [ -n "$key" ] && uci set wireless.wifinet_sta.key="$key"
+    
+    # 2. 创建网络接口
+    uci set network.wwan=interface
+    uci set network.wwan.proto='dhcp'
+    
+    # 3. 动态获取WAN zone并添加wwan
+    local wan_zone=$(uci show firewall | grep "name='wan'" | head -1 | cut -d. -f2)
+    [ -z "$wan_zone" ] && wan_zone="@zone[1]"
+    uci add_list firewall."$wan_zone".network='wwan'
+    
+    # 4. 提交并应用
+    uci commit wireless
+    uci commit network
+    uci commit firewall
+    
+    # 5. 重载网络
+    wifi
+    /etc/init.d/network reload
+    
+    log_message "中继模式已开启"
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "中继模式已开启，正在连接..."
+    json_dump
+}
+
+# 关闭中继模式
+disable_relay() {
+    # 检查是否有STA接口（兼容mode=sta和mode='sta'两种格式）
+    local sta_section=$(uci show wireless | grep -E "mode='?sta'?" | head -1 | cut -d. -f2)
+    
+    if [ -z "$sta_section" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "中继模式未开启"
+        json_dump
+        return
+    fi
+    
+    # 获取对应的network名称
+    local sta_network=$(uci get wireless."$sta_section".network 2>/dev/null)
+    
+    log_message "关闭中继模式: section=$sta_section network=$sta_network"
+    
+    # 1. 删除无线STA接口
+    uci delete wireless."$sta_section"
+    
+    # 2. 删除网络接口
+    if [ -n "$sta_network" ]; then
+        uci delete network."$sta_network" 2>/dev/null
+        # 3. 动态获取WAN zone并移除
+        local wan_zone=$(uci show firewall | grep "name='wan'" | head -1 | cut -d. -f2)
+        [ -z "$wan_zone" ] && wan_zone="@zone[1]"
+        uci del_list firewall."$wan_zone".network="$sta_network" 2>/dev/null
+    fi
+    
+    # 4. 提交配置
+    uci commit wireless
+    uci commit network
+    uci commit firewall
+    
+    # 5. 重载网络（与enable_relay保持一致）
+    wifi
+    /etc/init.d/network reload
+    
+    log_message "中继模式已关闭"
+    
+    json_init
+    json_add_string "status" "success"
+    json_add_string "message" "中继模式已关闭"
+    json_dump
+}
+
 case "$1" in
     list)
-        echo '{"get_status":{},"get_wireless_settings":{},"save_wireless_settings":{"settings":"object"},"connect":{"ssid":"string","encryption":"string","key":"string","band":"string"},"get_known_networks":{},"save_network":{"name":"string","encryption":"string","password":"string","band":"string"},"delete_networks":{"names":"array"},"save_order":{"wifi":"array"},"auto_switch":{},"get_log":{"lines":"number"},"clear_log":{},"get_retry_status":{},"reset_retry_count":{},"scan_wifi":{"band":"string"},"get_cached_scan":{"band":"string"}}'
+        echo '{"get_status":{},"get_wireless_settings":{},"save_wireless_settings":{"settings":"object"},"connect":{"ssid":"string","encryption":"string","key":"string","band":"string"},"get_known_networks":{},"save_network":{"name":"string","encryption":"string","password":"string","band":"string"},"delete_networks":{"names":"array"},"save_order":{"wifi":"array"},"auto_switch":{},"get_log":{"lines":"number"},"clear_log":{},"get_retry_status":{},"reset_retry_count":{},"scan_wifi":{"band":"string"},"get_cached_scan":{"band":"string"},"get_settings":{},"save_settings":{"settings":"object"},"enable_relay":{"ssid":"string","key":"string","encryption":"string","band":"string"},"disable_relay":{}}'
         ;;
     call)
         case "$2" in
@@ -906,6 +1262,10 @@ case "$1" in
             reset_retry_count) reset_retry_count ;;
             scan_wifi) scan_wifi "$3" ;;
             get_cached_scan) get_cached_scan "$3" ;;
+            get_settings) get_settings ;;
+            save_settings) save_settings "$3" ;;
+            enable_relay) enable_relay "$3" ;;
+            disable_relay) disable_relay ;;
         esac
         ;;
 esac

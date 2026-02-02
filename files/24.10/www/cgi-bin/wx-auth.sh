@@ -3,8 +3,25 @@
 # wx-auth.sh - 独立密码认证和ubus代理CGI脚本
 # 放置于 /www/cgi-bin/wx-auth.sh
 
-LOG_FILE="/etc/wx/wx-wireless.log"
-PASSWORD_FILE="/etc/wx/password.hash"
+# --- 基础路径配置 ---
+CONFIG_DIR="/etc/wx"
+LOG_FILE="$CONFIG_DIR/wx-wireless.log"
+PASSWORD_FILE="$CONFIG_DIR/password.hash"
+SETTINGS_FILE="$CONFIG_DIR/wx_settings.conf"
+
+# === 硬编码配置 (与wx-wireless保持一致) ===
+TOKEN_EXPIRY=3600                     # 登录Token有效期 (秒)
+MAX_FAIL=10                           # 密码错误锁定次数
+LOCK_TIME=3600                        # 锁定时长 (秒)
+
+# 加载用户配置文件
+if [ ! -f "$SETTINGS_FILE" ]; then
+    echo "Content-Type: application/json"
+    echo ""
+    echo '{"status":"error","message":"配置文件不存在"}'
+    exit 0
+fi
+. "$SETTINGS_FILE"
 
 # 获取设备名称（通过 DHCP 租约文件）
 get_device_name() {
@@ -26,9 +43,6 @@ echo ""
 # 获取action参数
 ACTION=$(echo "$QUERY_STRING" | sed -n 's/.*action=\([^&]*\).*/\1/p')
 METHOD=$(echo "$QUERY_STRING" | sed -n 's/.*method=\([^&]*\).*/\1/p')
-
-# Token有效期（秒）- 与前端保持一致
-TOKEN_EXPIRY=3600
 
 # 鉴权函数（含过期检查）
 check_auth() {
@@ -94,10 +108,6 @@ case "$ACTION" in
     verify)
         # 验证密码
         FAIL_FILE="/tmp/wx_fail_count"
-        # 密码错误最大次数
-        MAX_FAIL=10
-        # 锁定时间（秒）
-        LOCK_TIME=3600
         
         # 检查锁定
         if [ -f "$FAIL_FILE" ]; then

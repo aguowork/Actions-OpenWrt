@@ -31,7 +31,6 @@ uci set wireless.wifinet2.key='cccc5926'
 uci del wireless.MT7986_1_2.noscan
 uci set wireless.default_MT7986_1_2.encryption='sae-mixed'
 uci set wireless.default_MT7986_1_2.key='88888888..'
-uci set wireless.default_MT7986_1_2.disabled='1'
 uci set wireless.default_MT7986_1_1.encryption='sae-mixed'
 uci set wireless.default_MT7986_1_1.key='88888888..'
 uci commit wireless
