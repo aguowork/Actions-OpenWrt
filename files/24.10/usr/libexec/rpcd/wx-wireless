@@ -16,7 +16,7 @@ SETTINGS_FILE="$CONFIG_DIR/wx_settings.conf"
 TOKEN_EXPIRY=3600                     # 登录Token有效期 (秒)
 MAX_FAIL=10                           # 密码错误锁定次数
 LOCK_TIME=3600                        # 锁定时长 (秒)
-SHOW_WXPUSHER=0                       # 显示消息推送配置 (1=显示, 0=隐藏)
+SHOW_WXPUSHER=1                       # 显示消息推送配置 (1=显示, 0=隐藏)
 MAX_LOG_SIZE=102400                   # 日志最大大小 (Bytes)
 CHECK_WAIT_TIME=3                     # 检测循环等待间隔 (秒)
 REBOOT_DELAY_TIME=3                   # 触发重启前的缓冲时间 (秒)
@@ -353,7 +353,7 @@ save_wireless_settings() {
     fi
     
     uci commit wireless
-    wifi
+    wifi reload
     
     json_init
     json_add_string "status" "success"
@@ -437,9 +437,11 @@ connect() {
         uci commit network
         uci commit firewall
         
-        # 5. 重载网络
-        wifi
+        # 5. 重载网络（最优方案：热重载 + 防火墙）
+        wifi reload
+        sleep 3
         /etc/init.d/network reload
+        /etc/init.d/firewall reload
         
         log_message "中继模式已自动创建并连接: $ssid"
     else
@@ -449,7 +451,7 @@ connect() {
         uci set wireless."$sta_section".encryption="$encryption"
         uci set wireless."$sta_section".key="$key"
         uci commit wireless
-        wifi
+        wifi reload
         
         log_message "手动连接热点: $ssid 密码: $key 频段: $band 加密: $encryption"
     fi
@@ -567,6 +569,43 @@ push_message() {
     curl -s -X POST -H "Content-Type: application/json" \
         -d "$json_data" \
         "$WXPUSHER_API_URL" >/dev/null 2>&1
+}
+
+# 测试推送消息
+test_push() {
+    init_config
+    
+    # 检查配置
+    if [ -z "$WX_APP_TOKEN" ] || [ -z "$WX_MY_UID" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "请先配置应用Token和用户UID"
+        json_dump
+        return
+    fi
+    
+    # 获取设备名称
+    local device_name=$(uci get system.@system[0].hostname 2>/dev/null || echo "路由器")
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # 发送测试消息
+    local json_data="{\"appToken\":\"$WX_APP_TOKEN\",\"summary\":\"[$device_name] 测试推送\",\"content\":\"这是一条测试消息\\n时间: $timestamp\",\"uids\":[\"$WX_MY_UID\"]}"
+    local response=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d "$json_data" \
+        "$WXPUSHER_API_URL" 2>&1)
+    
+    # 检查响应
+    if echo "$response" | grep -q '"success":true'; then
+        json_init
+        json_add_string "status" "success"
+        json_add_string "message" "测试消息已发送"
+        json_dump
+    else
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "发送失败，请检查配置"
+        json_dump
+    fi
 }
 
 # 自动切换热点
@@ -712,7 +751,7 @@ auto_switch() {
         uci set wireless."$sta_section".encryption="$encryption"
         uci set wireless."$sta_section".key="$password"
         uci commit wireless
-        wifi
+        wifi reload
         
         # 核心逻辑修改：统计 SWITCH_COUNT (wifi 重载次数)
         # 只要执行了 wifi reload，无论后续连接成功与否，都要累加计数
@@ -1182,9 +1221,11 @@ enable_relay() {
     uci commit network
     uci commit firewall
     
-    # 5. 重载网络
-    wifi
+    # 5. 重载网络（最优方案：热重载 + 防火墙）
+    wifi reload
+    sleep 3
     /etc/init.d/network reload
+    /etc/init.d/firewall reload
     
     log_message "中继模式已开启"
     
@@ -1229,9 +1270,11 @@ disable_relay() {
     uci commit network
     uci commit firewall
     
-    # 5. 重载网络（与enable_relay保持一致）
-    wifi
+    # 5. 重载网络（最优方案：热重载 + 防火墙）
+    wifi reload
+    sleep 3
     /etc/init.d/network reload
+    /etc/init.d/firewall reload
     
     log_message "中继模式已关闭"
     
@@ -1243,7 +1286,7 @@ disable_relay() {
 
 case "$1" in
     list)
-        echo '{"get_status":{},"get_wireless_settings":{},"save_wireless_settings":{"settings":"object"},"connect":{"ssid":"string","encryption":"string","key":"string","band":"string"},"get_known_networks":{},"save_network":{"name":"string","encryption":"string","password":"string","band":"string"},"delete_networks":{"names":"array"},"save_order":{"wifi":"array"},"auto_switch":{},"get_log":{"lines":"number"},"clear_log":{},"get_retry_status":{},"reset_retry_count":{},"scan_wifi":{"band":"string"},"get_cached_scan":{"band":"string"},"get_settings":{},"save_settings":{"settings":"object"},"enable_relay":{"ssid":"string","key":"string","encryption":"string","band":"string"},"disable_relay":{}}'
+        echo '{"get_status":{},"get_wireless_settings":{},"save_wireless_settings":{"settings":"object"},"connect":{"ssid":"string","encryption":"string","key":"string","band":"string"},"get_known_networks":{},"save_network":{"name":"string","encryption":"string","password":"string","band":"string"},"delete_networks":{"names":"array"},"save_order":{"wifi":"array"},"auto_switch":{},"get_log":{"lines":"number"},"clear_log":{},"get_retry_status":{},"reset_retry_count":{},"scan_wifi":{"band":"string"},"get_cached_scan":{"band":"string"},"get_settings":{},"save_settings":{"settings":"object"},"test_push":{},"enable_relay":{"ssid":"string","key":"string","encryption":"string","band":"string"},"disable_relay":{}}'
         ;;
     call)
         case "$2" in
@@ -1264,6 +1307,7 @@ case "$1" in
             get_cached_scan) get_cached_scan "$3" ;;
             get_settings) get_settings ;;
             save_settings) save_settings "$3" ;;
+            test_push) test_push ;;
             enable_relay) enable_relay "$3" ;;
             disable_relay) disable_relay ;;
         esac
