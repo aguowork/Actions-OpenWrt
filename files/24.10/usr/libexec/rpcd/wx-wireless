@@ -56,6 +56,158 @@ init_config() {
     fi
 }
 
+# ========== JSON 辅助函数 (替代 jq，兼容 OpenWRT) ==========
+
+# 获取 wifi 数组长度
+json_get_wifi_count() {
+    local output=$(jsonfilter -i "$CONFIG_FILE" -e '@.wifi[*].name' 2>/dev/null)
+    if [ -z "$output" ]; then
+        echo "0"
+    else
+        echo "$output" | wc -l
+    fi
+}
+
+# 获取 wifi 数组中指定索引的字段值
+# 参数: $1=索引 $2=字段名
+json_get_wifi_field() {
+    local idx="$1"
+    local field="$2"
+    jsonfilter -i "$CONFIG_FILE" -e "@.wifi[$idx].$field" 2>/dev/null
+}
+
+# 获取 CQ_TIMES 值
+json_get_cq_times() {
+    jsonfilter -i "$CONFIG_FILE" -e '@.autowifiranking[0].CQ_TIMES' 2>/dev/null || echo "0"
+}
+
+# 设置 CQ_TIMES 值
+json_set_cq_times() {
+    local value="$1"
+    sed -i "s/\"CQ_TIMES\":[0-9]*/\"CQ_TIMES\":$value/" "$CONFIG_FILE"
+}
+
+# 更新 wifi 数组中指定索引的 last_updated 字段
+# 参数: $1=索引 $2=时间戳
+json_update_wifi_timestamp() {
+    local target_idx="$1"
+    local timestamp="$2"
+    local cq_times=$(json_get_cq_times)
+    local total=$(json_get_wifi_count)
+    
+    # 重建配置文件（更新指定索引的时间戳）
+    local new_wifi="["
+    local count=0
+    local i=0
+    while [ $i -lt $total ]; do
+        local n=$(json_get_wifi_field $i "name")
+        local e=$(json_get_wifi_field $i "encryption")
+        local p=$(json_get_wifi_field $i "password")
+        local b=$(json_get_wifi_field $i "band")
+        local t=$(json_get_wifi_field $i "last_updated")
+        
+        # 更新目标索引的时间戳
+        [ $i -eq $target_idx ] && t="$timestamp"
+        
+        [ $count -gt 0 ] && new_wifi="$new_wifi,"
+        new_wifi="$new_wifi{\"name\":\"$n\",\"encryption\":\"$e\",\"password\":\"$p\",\"band\":\"$b\",\"last_updated\":\"$t\"}"
+        count=$((count + 1))
+        i=$((i + 1))
+    done
+    new_wifi="$new_wifi]"
+    
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+}
+
+# 保存或更新 wifi 热点
+# 参数: $1=name $2=encryption $3=password $4=band $5=last_updated
+json_save_wifi() {
+    local name="$1"
+    local encryption="$2"
+    local password="$3"
+    local band="$4"
+    local last_updated="$5"
+    
+    # 读取现有配置并重建
+    local cq_times=$(json_get_cq_times)
+    local wifi_count=$(json_get_wifi_count)
+    local new_wifi="["
+    local found=0
+    local count=0
+    
+    # 遍历现有热点
+    local i=0
+    while [ $i -lt $wifi_count ]; do
+        local n=$(json_get_wifi_field $i "name")
+        local e=$(json_get_wifi_field $i "encryption")
+        local p=$(json_get_wifi_field $i "password")
+        local b=$(json_get_wifi_field $i "band")
+        local t=$(json_get_wifi_field $i "last_updated")
+        
+        if [ "$n" = "$name" ]; then
+            # 更新现有记录
+            e="$encryption"
+            p="$password"
+            b="$band"
+            t="$last_updated"
+            found=1
+        fi
+        
+        [ $count -gt 0 ] && new_wifi="$new_wifi,"
+        new_wifi="$new_wifi{\"name\":\"$n\",\"encryption\":\"$e\",\"password\":\"$p\",\"band\":\"$b\",\"last_updated\":\"$t\"}"
+        count=$((count + 1))
+        i=$((i + 1))
+    done
+    
+    # 如果是新记录，添加到末尾
+    if [ $found -eq 0 ]; then
+        [ $count -gt 0 ] && new_wifi="$new_wifi,"
+        new_wifi="$new_wifi{\"name\":\"$name\",\"encryption\":\"$encryption\",\"password\":\"$password\",\"band\":\"$band\",\"last_updated\":\"$last_updated\"}"
+    fi
+    
+    new_wifi="$new_wifi]"
+    
+    # 重写配置文件
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+}
+
+# 删除 wifi 热点
+# 参数: $1=name
+json_delete_wifi() {
+    local name="$1"
+    local cq_times=$(json_get_cq_times)
+    local total=$(json_get_wifi_count)
+    
+    # 重建配置文件（排除指定热点）
+    local new_wifi="["
+    local count=0
+    local i=0
+    while [ $i -lt $total ]; do
+        local n=$(json_get_wifi_field $i "name")
+        if [ "$n" != "$name" ]; then
+            [ $count -gt 0 ] && new_wifi="$new_wifi,"
+            local e=$(json_get_wifi_field $i "encryption")
+            local p=$(json_get_wifi_field $i "password")
+            local b=$(json_get_wifi_field $i "band")
+            local t=$(json_get_wifi_field $i "last_updated")
+            new_wifi="$new_wifi{\"name\":\"$n\",\"encryption\":\"$e\",\"password\":\"$p\",\"band\":\"$b\",\"last_updated\":\"$t\"}"
+            count=$((count + 1))
+        fi
+        i=$((i + 1))
+    done
+    new_wifi="$new_wifi]"
+    
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+}
+
+# 重写 wifi 数组（用于排序）
+# 参数: $1=新的wifi JSON数组字符串
+json_rewrite_wifi() {
+    local new_wifi="$1"
+    local cq_times=$(json_get_cq_times)
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+}
+
 # 检查网络连通性
 check_connectivity() {
     ping -c 1 -W 2 "$PING_TARGET" >/dev/null 2>&1
@@ -492,14 +644,8 @@ save_network() {
     
     local current_time=$(date "+%Y-%m-%d %H:%M:%S")
     
-    # 使用jq更新配置
-    local tmp_file=$(mktemp)
-    jq --arg name "$name" --arg enc "$encryption" --arg pwd "$password" --arg band "$band" --arg time "$current_time" \
-       'if (.wifi | any(.name == $name)) then
-            .wifi |= map(if .name == $name then .encryption = $enc | .password = $pwd | .band = $band | .last_updated = $time else . end)
-        else
-            .wifi += [{"name": $name, "encryption": $enc, "password": $pwd, "band": $band, "last_updated": $time}]
-        end' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+    # 使用辅助函数更新配置（兼容 OpenWRT）
+    json_save_wifi "$name" "$encryption" "$password" "$band" "$current_time"
     
     log_message "保存热点: $name 密码: $password 频段: $band 加密: $encryption"
     
@@ -518,8 +664,7 @@ delete_networks() {
     json_get_values names names
     
     for name in $names; do
-        local tmp_file=$(mktemp)
-        jq --arg name "$name" 'del(.wifi[] | select(.name == $name))' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+        json_delete_wifi "$name"
         log_message "删除热点: $name"
     done
     
@@ -533,10 +678,13 @@ delete_networks() {
 save_order() {
     init_config
     
-    # 解析输入
-    local wifi_list=$(echo "$1" | jq -r '.wifi' 2>/dev/null)
+    # 使用 jshn 解析输入的 wifi 数组
+    json_load "$1"
     
-    if [ -z "$wifi_list" ] || [ "$wifi_list" = "null" ]; then
+    local wifi_array_type
+    json_get_type wifi_array_type wifi
+    
+    if [ "$wifi_array_type" != "array" ]; then
         json_init
         json_add_string "status" "error"
         json_add_string "message" "无效的WiFi列表数据"
@@ -544,9 +692,28 @@ save_order() {
         return
     fi
     
-    # 使用 jq 合并数据：将输入的 wifi 数据合并到现有配置文件中，确保不触碰 autowifiranking
-    local tmp_file=$(mktemp)
-    jq --argjson new_wifi "$wifi_list" '.wifi = $new_wifi' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+    # 构建新的 wifi JSON 数组
+    local new_wifi="["
+    local idx=0
+    json_select wifi
+    while json_get_type item_type $idx && [ "$item_type" = "object" ]; do
+        json_select $idx
+        local name encryption password band last_updated
+        json_get_var name name
+        json_get_var encryption encryption
+        json_get_var password password
+        json_get_var band band
+        json_get_var last_updated last_updated
+        json_select ..
+        
+        [ $idx -gt 0 ] && new_wifi="$new_wifi,"
+        new_wifi="$new_wifi{\"name\":\"$name\",\"encryption\":\"$encryption\",\"password\":\"$password\",\"band\":\"$band\",\"last_updated\":\"$last_updated\"}"
+        idx=$((idx + 1))
+    done
+    new_wifi="$new_wifi]"
+    
+    # 使用辅助函数重写配置
+    json_rewrite_wifi "$new_wifi"
     
     json_init
     json_add_string "status" "success"
@@ -639,7 +806,7 @@ auto_switch() {
     local current_ssid=$(uci get wireless."$sta_section".ssid 2>/dev/null)
     
     # 先检查热点数量（必须有2个以上才能切换）
-    local wifi_count=$(jq -r '.wifi | length' "$CONFIG_FILE" 2>/dev/null)
+    local wifi_count=$(json_get_wifi_count)
     
     if [ -z "$wifi_count" ] || [ "$wifi_count" -eq 0 ]; then
         log_message "错误：没有已知热点可切换"
@@ -683,11 +850,11 @@ auto_switch() {
     # 遍历热点尝试连接
     local i=0
     while [ $i -lt $wifi_count ]; do
-        local name=$(jq -r ".wifi[$i].name" "$CONFIG_FILE")
-        local encryption=$(jq -r ".wifi[$i].encryption" "$CONFIG_FILE")
-        local password=$(jq -r ".wifi[$i].password" "$CONFIG_FILE")
-        local band=$(jq -r ".wifi[$i].band" "$CONFIG_FILE")
-        local last_updated=$(jq -r ".wifi[$i].last_updated" "$CONFIG_FILE")
+        local name=$(json_get_wifi_field $i "name")
+        local encryption=$(json_get_wifi_field $i "encryption")
+        local password=$(json_get_wifi_field $i "password")
+        local band=$(json_get_wifi_field $i "band")
+        local last_updated=$(json_get_wifi_field $i "last_updated")
         local wifi_index=$i
         
         i=$((i + 1))
@@ -741,9 +908,7 @@ auto_switch() {
         
         # 更新last_updated时间戳（防止短时间内重复尝试）
         local current_time=$(date "+%Y-%m-%d %H:%M:%S")
-        local tmp_file=$(mktemp)
-        jq --arg time "$current_time" --argjson idx "$wifi_index" \
-           '.wifi[$idx].last_updated = $time' "$CONFIG_FILE" > "$tmp_file" && mv "$tmp_file" "$CONFIG_FILE"
+        json_update_wifi_timestamp "$wifi_index" "$current_time"
         
         # 配置并重启WiFi
         uci set wireless."$sta_section".device="$target_device"
@@ -756,10 +921,9 @@ auto_switch() {
         # 核心逻辑修改：统计 SWITCH_COUNT (wifi 重载次数)
         # 只要执行了 wifi reload，无论后续连接成功与否，都要累加计数
         # 这是为了准确追踪无线驱动被重置的次数，防范累积性故障
-        local switch_count=$(jq -r '.autowifiranking[0].CQ_TIMES' "$CONFIG_FILE" 2>/dev/null || echo "0")
+        local switch_count=$(json_get_cq_times)
         switch_count=$((switch_count + 1))
-        local tmp_count=$(mktemp)
-        jq --arg value "$switch_count" '.autowifiranking[0].CQ_TIMES = ($value | tonumber)' "$CONFIG_FILE" > "$tmp_count" && mv "$tmp_count" "$CONFIG_FILE"
+        json_set_cq_times "$switch_count"
         log_message "WiFi配置已应用，累计切换次数: $switch_count"
         
         log_message "等待设备就绪..."
@@ -831,7 +995,7 @@ auto_switch() {
     done
     
     # 统计并检查自动重启
-    local switch_count=$(jq -r '.autowifiranking[0].CQ_TIMES' "$CONFIG_FILE" 2>/dev/null || echo "0")
+    local switch_count=$(json_get_cq_times)
     
     log_message "自动切换循环结束，当前累计切换次数: $switch_count/$RESTART_THRESHOLD"
     
@@ -840,8 +1004,7 @@ auto_switch() {
         log_message "⚠️ 累计切换次数达到阈值($switch_count/$RESTART_THRESHOLD)，执行自动重启以恢复无线网卡状态"
         
         # 重置切换计数
-        local temp_reboot=$(mktemp)
-        jq '.autowifiranking[0].CQ_TIMES = 0' "$CONFIG_FILE" > "$temp_reboot" && mv "$temp_reboot" "$CONFIG_FILE"
+        json_set_cq_times 0
         
         # 缓冲一段时间后重启
         ( sleep "$REBOOT_DELAY_TIME" && reboot ) &
@@ -903,7 +1066,7 @@ get_retry_status() {
     # 从配置文件读取重试状态
     local cq_times
     
-    cq_times=$(jq -r '.autowifiranking[0].CQ_TIMES' "$CONFIG_FILE" 2>/dev/null || echo "0")
+    cq_times=$(json_get_cq_times)
     
     json_init
     json_add_int "cq_times" "$cq_times"
@@ -917,9 +1080,7 @@ reset_retry_count() {
     init_config
     
     # 重置配置文件中的CQ_TIMES为0
-    local temp_file=$(mktemp)
-    jq '.autowifiranking[0].CQ_TIMES = 0' "$CONFIG_FILE" > "$temp_file"
-    mv "$temp_file" "$CONFIG_FILE"
+    json_set_cq_times 0
     
     log_message "重试计数已重置为0"
     
