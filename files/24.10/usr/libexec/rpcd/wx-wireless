@@ -929,6 +929,28 @@ reset_retry_count() {
     json_dump
 }
 
+# 动态获取指定频段的AP接口名
+# 参数: band (2g/5g)
+# 返回: 接口名 (如 ra0, phy0-ap0 等)
+get_ap_ifname_by_band() {
+    local target_band="$1"
+    local wireless_status=$(ubus call network.wireless status 2>/dev/null)
+    
+    # 遍历所有 device，找到匹配 band 的
+    for dev in $(uci show wireless | grep "\.band=" | cut -d. -f2); do
+        local dev_band=$(uci get wireless."$dev".band 2>/dev/null)
+        if [ "$dev_band" = "$target_band" ]; then
+            # 从 wireless status 获取该 device 下的第一个 AP 接口
+            local ifname=$(echo "$wireless_status" | jsonfilter -e "@[\"$dev\"].interfaces[@.config.mode=\"ap\"].ifname" 2>/dev/null | head -1)
+            if [ -n "$ifname" ]; then
+                echo "$ifname"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 # 扫描附近WiFi网络
 # 参数: band (2g/5g)
 # 注意: ubus call iwinfo scan 存在 SSID 缓冲区污染 bug，改用 iwinfo scan 解析文本
@@ -940,13 +962,20 @@ scan_wifi() {
     
     # 规范化 band 参数
     local cache_band="2g"
-    local scan_device="ra0"
     case "$band" in
-        5g|5G)
-            scan_device="rax0"
-            cache_band="5g"
-            ;;
+        5g|5G) cache_band="5g" ;;
     esac
+    
+    # 动态获取扫描接口名
+    local scan_device=$(get_ap_ifname_by_band "$cache_band")
+    if [ -z "$scan_device" ]; then
+        json_init
+        json_add_array "results"
+        json_close_array
+        json_add_string "error" "未找到${cache_band}频段接口"
+        json_dump
+        return
+    fi
     
     local cache_file="/tmp/wifi_scan_${cache_band}.json"
     
