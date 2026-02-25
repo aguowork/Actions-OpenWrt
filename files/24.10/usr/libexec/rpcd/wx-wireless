@@ -87,6 +87,18 @@ json_set_cq_times() {
     sed -i "s/\"CQ_TIMES\":[0-9]*/\"CQ_TIMES\":$value/" "$CONFIG_FILE"
 }
 
+# JSON 字符串转义（处理 \ 和 "，防止 JSON 损坏）
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+# 构建单个 wifi JSON 对象（统一入口，避免重复拼接）
+# 参数: $1=name $2=encryption $3=password $4=band $5=last_updated
+json_wifi_entry() {
+    printf '{"name":"%s","encryption":"%s","password":"%s","band":"%s","last_updated":"%s"}' \
+        "$(json_escape "$1")" "$(json_escape "$2")" "$(json_escape "$3")" "$4" "$5"
+}
+
 # 更新 wifi 数组中指定索引的 last_updated 字段
 # 参数: $1=索引 $2=时间戳
 json_update_wifi_timestamp() {
@@ -110,7 +122,7 @@ json_update_wifi_timestamp() {
         [ $i -eq $target_idx ] && t="$timestamp"
         
         [ $count -gt 0 ] && new_wifi="$new_wifi,"
-        new_wifi="$new_wifi{\"name\":\"$n\",\"encryption\":\"$e\",\"password\":\"$p\",\"band\":\"$b\",\"last_updated\":\"$t\"}"
+        new_wifi="$new_wifi$(json_wifi_entry "$n" "$e" "$p" "$b" "$t")"
         count=$((count + 1))
         i=$((i + 1))
     done
@@ -154,7 +166,7 @@ json_save_wifi() {
         fi
         
         [ $count -gt 0 ] && new_wifi="$new_wifi,"
-        new_wifi="$new_wifi{\"name\":\"$n\",\"encryption\":\"$e\",\"password\":\"$p\",\"band\":\"$b\",\"last_updated\":\"$t\"}"
+        new_wifi="$new_wifi$(json_wifi_entry "$n" "$e" "$p" "$b" "$t")"
         count=$((count + 1))
         i=$((i + 1))
     done
@@ -162,7 +174,7 @@ json_save_wifi() {
     # 如果是新记录，添加到末尾
     if [ $found -eq 0 ]; then
         [ $count -gt 0 ] && new_wifi="$new_wifi,"
-        new_wifi="$new_wifi{\"name\":\"$name\",\"encryption\":\"$encryption\",\"password\":\"$password\",\"band\":\"$band\",\"last_updated\":\"$last_updated\"}"
+        new_wifi="$new_wifi$(json_wifi_entry "$name" "$encryption" "$password" "$band" "$last_updated")"
     fi
     
     new_wifi="$new_wifi]"
@@ -190,7 +202,7 @@ json_delete_wifi() {
             local p=$(json_get_wifi_field $i "password")
             local b=$(json_get_wifi_field $i "band")
             local t=$(json_get_wifi_field $i "last_updated")
-            new_wifi="$new_wifi{\"name\":\"$n\",\"encryption\":\"$e\",\"password\":\"$p\",\"band\":\"$b\",\"last_updated\":\"$t\"}"
+            new_wifi="$new_wifi$(json_wifi_entry "$n" "$e" "$p" "$b" "$t")"
             count=$((count + 1))
         fi
         i=$((i + 1))
@@ -692,9 +704,27 @@ save_order() {
         return
     fi
     
+    # 防御性校验：输入数量不能少于现有数量（防止误覆盖导致数据丢失）
+    local existing_count=$(json_get_wifi_count)
+    local input_count=1
+    json_select wifi
+    while json_get_type _chk_type $input_count && [ "$_chk_type" = "object" ]; do
+        input_count=$((input_count + 1))
+    done
+    input_count=$((input_count - 1))
+    json_select ..
+    
+    if [ "$existing_count" -gt 0 ] && [ "$input_count" -eq 0 ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "排序数据为空，已阻止覆盖"
+        json_dump
+        return
+    fi
+    
     # 构建新的 wifi JSON 数组
     local new_wifi="["
-    local idx=0
+    local idx=1
     json_select wifi
     while json_get_type item_type $idx && [ "$item_type" = "object" ]; do
         json_select $idx
@@ -706,8 +736,8 @@ save_order() {
         json_get_var last_updated last_updated
         json_select ..
         
-        [ $idx -gt 0 ] && new_wifi="$new_wifi,"
-        new_wifi="$new_wifi{\"name\":\"$name\",\"encryption\":\"$encryption\",\"password\":\"$password\",\"band\":\"$band\",\"last_updated\":\"$last_updated\"}"
+        [ $idx -gt 1 ] && new_wifi="$new_wifi,"
+        new_wifi="$new_wifi$(json_wifi_entry "$name" "$encryption" "$password" "$band" "$last_updated")"
         idx=$((idx + 1))
     done
     new_wifi="$new_wifi]"
@@ -1049,7 +1079,7 @@ get_log() {
 
 # 清空日志
 clear_log() {
-    echo "" > "$LOG_FILE"
+    > "$LOG_FILE"
     json_init
     json_add_string "status" "success"
     json_add_string "message" "日志已清空"
@@ -1283,8 +1313,25 @@ save_settings() {
     json_get_var retry_wifi_interval retry_wifi_interval
     json_get_var restart_threshold restart_threshold
     
-    # 写入配置文件
-    cat > "$SETTINGS_FILE" << EOF
+    # 整数值消毒（仅保留数字）
+    local safe_wxpusher_enabled=$(echo "${wxpusher_enabled:-0}" | tr -cd '0-9')
+    local safe_max_retries=$(echo "${auto_switch_max_retries:-25}" | tr -cd '0-9')
+    local safe_retry_interval=$(echo "${retry_wifi_interval:-688}" | tr -cd '0-9')
+    local safe_restart_threshold=$(echo "${restart_threshold:-10}" | tr -cd '0-9')
+    [ -z "$safe_wxpusher_enabled" ] && safe_wxpusher_enabled=0
+    [ -z "$safe_max_retries" ] && safe_max_retries=25
+    [ -z "$safe_retry_interval" ] && safe_retry_interval=688
+    [ -z "$safe_restart_threshold" ] && safe_restart_threshold=10
+    
+    # 字符串值消毒（转义单引号，防止 shell 注入）
+    local safe_app_token=$(printf '%s' "$wx_app_token" | sed "s/'/'\\\\''/g")
+    local safe_my_uid=$(printf '%s' "$wx_my_uid" | sed "s/'/'\\\\''/g")
+    local safe_api_url=$(printf '%s' "${wxpusher_api_url:-https://wxpusher.zjiecode.com/api/send/message}" | sed "s/'/'\\\\''/g")
+    local safe_ping_target=$(printf '%s' "${ping_target:-223.5.5.5}" | sed "s/'/'\\\\''/g")
+    
+    # 写入配置文件（字符串用单引号包裹，防止 source 时 shell 注入）
+    {
+        cat << 'HEADER'
 # ============================================================
 # WX-Wireless 配置文件
 # 路径: /etc/wx/wx_settings.conf
@@ -1293,20 +1340,21 @@ save_settings() {
 
 # === WxPusher 微信推送配置 ===
 # 获取方式: https://wxpusher.zjiecode.com/admin/login
-WXPUSHER_ENABLED=${wxpusher_enabled:-0}                    # 推送开关 (1=开启, 0=关闭)
-WX_APP_TOKEN="${wx_app_token}"  # 应用Token
-WX_MY_UID="${wx_my_uid}"       # 用户UID
-WXPUSHER_API_URL="${wxpusher_api_url:-https://wxpusher.zjiecode.com/api/send/message}"
-
-# === 网络检测配置 ===
-PING_TARGET="${ping_target:-223.5.5.5}"               # 网络连通性检测IP
-
-# === 自动切换配置 ===
-AUTO_SWITCH_MAX_RETRIES=${auto_switch_max_retries:-25}            # 连接/检测最大重试次数
-RETRY_WIFI_INTERVAL=${retry_wifi_interval:-688}               # 相同热点重试冷却时间 (秒)
-RESTART_THRESHOLD=${restart_threshold:-10}                  # 累计失败后自动重启阈值
-
-EOF
+HEADER
+        printf "WXPUSHER_ENABLED=%s\n" "$safe_wxpusher_enabled"
+        printf "WX_APP_TOKEN='%s'\n" "$safe_app_token"
+        printf "WX_MY_UID='%s'\n" "$safe_my_uid"
+        printf "WXPUSHER_API_URL='%s'\n" "$safe_api_url"
+        echo ""
+        echo "# === 网络检测配置 ==="
+        printf "PING_TARGET='%s'\n" "$safe_ping_target"
+        echo ""
+        echo "# === 自动切换配置 ==="
+        printf "AUTO_SWITCH_MAX_RETRIES=%s\n" "$safe_max_retries"
+        printf "RETRY_WIFI_INTERVAL=%s\n" "$safe_retry_interval"
+        printf "RESTART_THRESHOLD=%s\n" "$safe_restart_threshold"
+        echo ""
+    } > "$SETTINGS_FILE"
     
     # 重新加载配置
     . "$SETTINGS_FILE"
