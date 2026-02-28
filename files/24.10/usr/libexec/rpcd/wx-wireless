@@ -16,7 +16,7 @@ SETTINGS_FILE="$CONFIG_DIR/wx_settings.conf"
 TOKEN_EXPIRY=3600                     # 登录Token有效期 (秒)
 MAX_FAIL=10                           # 密码错误锁定次数
 LOCK_TIME=3600                        # 锁定时长 (秒)
-SHOW_WXPUSHER=0                       # 显示消息推送配置 (1=显示, 0=隐藏)
+SHOW_WXPUSHER=1                       # 显示消息推送配置 (1=显示, 0=隐藏)
 MAX_LOG_SIZE=102400                   # 日志最大大小 (Bytes)
 CHECK_WAIT_TIME=3                     # 检测循环等待间隔 (秒)
 REBOOT_DELAY_TIME=3                   # 触发重启前的缓冲时间 (秒)
@@ -220,10 +220,14 @@ json_rewrite_wifi() {
     echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
 }
 
-# 检查网络连通性
+# 检查网络连通性（遍历多个检测目标，每个发3包，任意1个目标通即视为连通）
+# PING_TARGETS 支持空格分隔多个IP，如 '223.5.5.5 119.29.29.29'
 check_connectivity() {
-    ping -c 1 -W 2 "$PING_TARGET" >/dev/null 2>&1
-    return $?
+    local targets="${PING_TARGETS:-$PING_TARGET}"
+    for target in $targets; do
+        ping -c 3 -W 5 "$target" >/dev/null 2>&1 && return 0
+    done
+    return 1
 }
 
 # 获取无线 STA 配置段名称（兼容mode=sta和mode='sta'两种格式）
@@ -1282,7 +1286,7 @@ get_settings() {
     json_add_string "wxpusher_api_url" "$WXPUSHER_API_URL"
     
     # 网络检测配置
-    json_add_string "ping_target" "$PING_TARGET"
+    json_add_string "ping_target" "${PING_TARGETS:-$PING_TARGET}"
     
     # 自动切换配置
     json_add_int "auto_switch_max_retries" "$AUTO_SWITCH_MAX_RETRIES"
@@ -1347,7 +1351,8 @@ HEADER
         printf "WXPUSHER_API_URL='%s'\n" "$safe_api_url"
         echo ""
         echo "# === 网络检测配置 ==="
-        printf "PING_TARGET='%s'\n" "$safe_ping_target"
+        echo "# 支持空格分隔多个IP，如 '223.5.5.5 119.29.29.29'"
+        printf "PING_TARGETS='%s'\n" "$safe_ping_target"
         echo ""
         echo "# === 自动切换配置 ==="
         printf "AUTO_SWITCH_MAX_RETRIES=%s\n" "$safe_max_retries"
