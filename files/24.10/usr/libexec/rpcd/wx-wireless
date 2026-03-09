@@ -958,7 +958,20 @@ auto_switch() {
         local switch_count=$(json_get_cq_times)
         switch_count=$((switch_count + 1))
         json_set_cq_times "$switch_count"
-        log_message "WiFi配置已应用，累计切换次数: $switch_count"
+        log_message "WiFi配置已应用，累计切换次数: $switch_count/$RESTART_THRESHOLD"
+        
+        # 立即检查是否达到重启阈值（修复：避免成功连接时跳过检查导致计数无限增长）
+        if [ "$switch_count" -ge "$RESTART_THRESHOLD" ]; then
+            log_message "⚠️ 累计切换次数达到阈值($switch_count/$RESTART_THRESHOLD)，执行自动重启以恢复无线网卡状态"
+            json_set_cq_times 0
+            ( sleep "$REBOOT_DELAY_TIME" && reboot ) &
+            
+            json_init
+            json_add_string "status" "warning"
+            json_add_string "message" "累计且频繁切换次数过多，系统即将自动重启以保护设备"
+            json_dump
+            return
+        fi
         
         log_message "等待设备就绪..."
         
@@ -1028,27 +1041,7 @@ auto_switch() {
         log_message "网络不通: $name，尝试下一个热点"
     done
     
-    # 统计并检查自动重启
-    local switch_count=$(json_get_cq_times)
-    
-    log_message "自动切换循环结束，当前累计切换次数: $switch_count/$RESTART_THRESHOLD"
-    
-    # 检查是否达到重启阈值
-    if [ "$switch_count" -ge "$RESTART_THRESHOLD" ]; then
-        log_message "⚠️ 累计切换次数达到阈值($switch_count/$RESTART_THRESHOLD)，执行自动重启以恢复无线网卡状态"
-        
-        # 重置切换计数
-        json_set_cq_times 0
-        
-        # 缓冲一段时间后重启
-        ( sleep "$REBOOT_DELAY_TIME" && reboot ) &
-        
-        json_init
-        json_add_string "status" "warning"
-        json_add_string "message" "累计且频繁切换次数过多，系统即将自动重启以保护设备"
-        json_dump
-        return
-    fi
+    log_message "自动切换循环结束，所有热点尝试失败"
     
     json_init
     json_add_string "status" "error"
