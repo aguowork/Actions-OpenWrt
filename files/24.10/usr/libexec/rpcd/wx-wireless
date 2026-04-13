@@ -16,7 +16,7 @@ SETTINGS_FILE="$CONFIG_DIR/wx_settings.conf"
 TOKEN_EXPIRY=3600                     # 登录Token有效期 (秒)
 MAX_FAIL=10                           # 密码错误锁定次数
 LOCK_TIME=3600                        # 锁定时长 (秒)
-SHOW_WXPUSHER=1                       # 显示消息推送配置 (1=显示, 0=隐藏)
+SHOW_WXPUSHER=0                       # 显示消息推送配置 (1=显示, 0=隐藏)
 MAX_LOG_SIZE=102400                   # 日志最大大小 (Bytes)
 CHECK_WAIT_TIME=3                     # 检测循环等待间隔 (秒)
 REBOOT_DELAY_TIME=3                   # 触发重启前的缓冲时间 (秒)
