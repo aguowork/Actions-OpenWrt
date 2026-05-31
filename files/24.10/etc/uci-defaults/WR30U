@@ -43,3 +43,7 @@ uci set system.led_network.dev='apcli0'
 uci del system.led_network.mode
 uci add_list system.led_network.mode='link'
 uci commit system
+
+# /etc/config/wechatpush
+uci set wechatpush.config.device_name='WR30U'
+uci commit wechatpush

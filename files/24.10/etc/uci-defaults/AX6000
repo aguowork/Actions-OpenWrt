@@ -34,3 +34,7 @@ uci set wireless.default_MT7986_1_2.key='88888888..'
 uci set wireless.default_MT7986_1_1.encryption='sae-mixed'
 uci set wireless.default_MT7986_1_1.key='88888888..'
 uci commit wireless
+
+# /etc/config/wechatpush
+uci set wechatpush.config.device_name='AX6000'
+uci commit wechatpush

@@ -86,12 +86,10 @@ echo "脚本和定时任务配置完成！"
 echo "开始配置插件..."
 
 # ddnsto 配置
-echo -e "\toption token '78846bf5-9a1f-4178-8aca-eeac5c38d4e6'" >> feeds/nas/network/services/ddnsto/files/ddnsto.config
+: "${DDNSTO_TOKEN:?Missing GitHub Secret DDNSTO_TOKEN}"
+echo -e "\toption token '${DDNSTO_TOKEN}'" >> feeds/nas/network/services/ddnsto/files/ddnsto.config
 sed -i "s/option enabled '0'/option enabled '1'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
 sed -i "s/option index '.*'/option index '2'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
-
-# wechatpush 自定义配置（设备名称）
-sed -i "s/option device_name '.*'/option device_name '360-T7'/g" feeds/luci/applications/luci-app-wechatpush/root/etc/config/wechatpush
 
 echo "插件配置完成！"
 

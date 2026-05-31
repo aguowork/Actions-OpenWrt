@@ -65,7 +65,7 @@ jobs:
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gettext-base gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -100,8 +100,19 @@ jobs:
       run: cd openwrt && ./scripts/feeds install -a
 
     - name: 📝 加载自定义配置
+      env:
+        WECHATPUSH_SC3KEY: ${{ secrets.WECHATPUSH_SC3KEY }}
+        WECHATPUSH_SC3UID: ${{ secrets.WECHATPUSH_SC3UID }}
+        DDNSTO_TOKEN: ${{ secrets.DDNSTO_TOKEN }}
       run: |
+        : "${WECHATPUSH_SC3KEY:?Missing GitHub Secret WECHATPUSH_SC3KEY}"
+        : "${WECHATPUSH_SC3UID:?Missing GitHub Secret WECHATPUSH_SC3UID}"
+        : "${DDNSTO_TOKEN:?Missing GitHub Secret DDNSTO_TOKEN}"
         [ -e files/24.10 ] && mkdir -p openwrt/files && cp -rf files/24.10/* openwrt/files/
+        if [ -f openwrt/files/etc/config/wechatpush ]; then
+          envsubst '${WECHATPUSH_SC3KEY} ${WECHATPUSH_SC3UID}' < openwrt/files/etc/config/wechatpush > openwrt/files/etc/config/wechatpush.tmp
+          mv openwrt/files/etc/config/wechatpush.tmp openwrt/files/etc/config/wechatpush
+        fi
         cd openwrt
         # 根据设备型号选择对应的 defconfig 基础配置
         case "${{ matrix.device }}" in
