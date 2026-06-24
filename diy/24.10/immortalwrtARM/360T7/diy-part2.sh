@@ -87,9 +87,9 @@ echo "开始配置插件..."
 
 # ddnsto 配置
 : "${DDNSTO_TOKEN:?Missing GitHub Secret DDNSTO_TOKEN}"
-echo -e "\toption token '${DDNSTO_TOKEN}'" >> feeds/nas/network/services/ddnsto/files/ddnsto.config
-sed -i "s/option enabled '0'/option enabled '1'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
-sed -i "s/option index '.*'/option index '2'/g" feeds/nas/network/services/ddnsto/files/ddnsto.config
+echo -e "\toption token '${DDNSTO_TOKEN}'" >> feeds/nas/ddnsto/files/ddnsto.config
+sed -i "s/option enabled '0'/option enabled '1'/g" feeds/nas/ddnsto/files/ddnsto.config
+sed -i "s/option index '.*'/option index '2'/g" feeds/nas/ddnsto/files/ddnsto.config
 
 echo "插件配置完成！"
 

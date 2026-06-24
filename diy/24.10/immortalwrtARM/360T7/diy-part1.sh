@@ -15,8 +15,7 @@
 # 时机：在 feeds update 之前执行
 # ============================================
 
-# ddnsto feed 源（提供 ddnsto 及相关 LuCI 应用）
-echo 'src-git nas https://github.com/linkease/nas-packages.git;master' >> feeds.conf.default
-echo 'src-git nas_luci https://github.com/linkease/nas-packages-luci.git;main' >> feeds.conf.default
+# ddnsto feed 源（提供新版 ddnsto 及相关 LuCI 应用）
+echo 'src-git nas https://github.com/linkease/ddnsto-openwrt-package.git;main' >> feeds.conf.default
 
 echo "diy-part1.sh 执行完成 - feed 源已添加"
