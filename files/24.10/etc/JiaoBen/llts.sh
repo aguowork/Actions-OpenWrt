@@ -60,7 +60,7 @@ check_internet() {
 # 定义发送消息的函数
 send_push_notification() {
     local PUSH_URL="https://wxpusher.zjiecode.com/api/send/message"
-    local APP_TOKEN="AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6"
+    local APP_TOKEN="${WXPUSHER_TOKEN}"
     local MYUIDS=("UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k")
     local UIDS=$(IFS=, ; echo "${MYUIDS[*]}")
 

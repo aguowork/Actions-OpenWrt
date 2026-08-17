@@ -2,7 +2,7 @@
 
 # 消息推送相关参数
 PUSH_API_URL="https://wxpusher.zjiecode.com/api/send/message"
-APP_TOKEN="AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6"
+APP_TOKEN="${WXPUSHER_TOKEN}"
 MY_UID="UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"
 PING_HOST="223.5.5.5"
 DEVICE_NAME=$(uci get system.@system[0].hostname)

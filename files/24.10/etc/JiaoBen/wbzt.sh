@@ -4,7 +4,7 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")") # 获取当前脚本所在目录
 LOG_FILE="${SCRIPT_DIR}/$(basename $0 .sh).log" # 日志文件的存储路径
 MAX_LOG_SIZE="100"                      # 日志文件最大大小，单位为KB
 PUSH_API_URL="https://wxpusher.zjiecode.com/api/send/message"
-APP_TOKEN="AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6"
+APP_TOKEN="${WXPUSHER_TOKEN}"
 MY_UID="UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"
 # 移除未使用的TOPIC_ID变量，保持与qdts.sh一致
 KEY_FORMAT='#Key=".*-.*-.*-.*-.*-.*-.*"' # 日志文件第一行格式吗，正则表达式

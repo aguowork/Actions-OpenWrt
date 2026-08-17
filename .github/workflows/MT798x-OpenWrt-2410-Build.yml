@@ -103,16 +103,28 @@ jobs:
       env:
         WECHATPUSH_SC3KEY: ${{ secrets.WECHATPUSH_SC3KEY }}
         WECHATPUSH_SC3UID: ${{ secrets.WECHATPUSH_SC3UID }}
+        WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
         DDNSTO_TOKEN: ${{ secrets.DDNSTO_TOKEN }}
       run: |
         : "${WECHATPUSH_SC3KEY:?Missing GitHub Secret WECHATPUSH_SC3KEY}"
         : "${WECHATPUSH_SC3UID:?Missing GitHub Secret WECHATPUSH_SC3UID}"
+        : "${WXPUSHER_TOKEN:?Missing GitHub Secret WXPUSHER_TOKEN}"
         : "${DDNSTO_TOKEN:?Missing GitHub Secret DDNSTO_TOKEN}"
         [ -e files/24.10 ] && mkdir -p openwrt/files && cp -rf files/24.10/* openwrt/files/
-        if [ -f openwrt/files/etc/config/wechatpush ]; then
-          envsubst '${WECHATPUSH_SC3KEY} ${WECHATPUSH_SC3UID}' < openwrt/files/etc/config/wechatpush > openwrt/files/etc/config/wechatpush.tmp
-          mv openwrt/files/etc/config/wechatpush.tmp openwrt/files/etc/config/wechatpush
-        fi
+        secret_templates=(
+          openwrt/files/etc/config/wechatpush
+          openwrt/files/etc/wx/wx_settings.conf
+          openwrt/files/etc/JiaoBen/wbzt.sh
+          openwrt/files/etc/JiaoBen/qdts.sh
+          openwrt/files/etc/JiaoBen/fcjh.sh
+          openwrt/files/etc/JiaoBen/llts.sh
+        )
+        for template in "${secret_templates[@]}"; do
+          if [ -f "$template" ]; then
+            envsubst '${WECHATPUSH_SC3KEY} ${WECHATPUSH_SC3UID} ${WXPUSHER_TOKEN}' < "$template" > "${template}.tmp"
+            mv "${template}.tmp" "$template"
+          fi
+        done
         cd openwrt
         # 根据设备型号选择对应的 defconfig 基础配置
         case "${{ matrix.device }}" in

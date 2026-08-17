@@ -91,7 +91,7 @@ check_log_file() {
 # 定义发送消息的函数
 send_push_notification() {
     local PUSH_URL="https://wxpusher.zjiecode.com/api/send/message"
-    local APP_TOKEN="AT_jf0zuTx0PjA4qBnyCGeKf5J4t0DeUIc6"
+    local APP_TOKEN="${WXPUSHER_TOKEN}"
     local TOPICIDS="33181"
     # APP_TOKEN 是应用的Token
     # TOPICIDS 是主题ID
