@@ -806,7 +806,7 @@ notify_error() {
 
     printf '%s %s\n' "${error_key}" "${now}" > "${ERROR_STATE_FILE}" 2>/dev/null || true
     error_content=$(printf '脚本异常通知\n\n错误信息：%s\n\n相同异常将在限流周期内静默。' "${error_message}")
-    if push_message "${error_content}" "XHSZTTS"; then
+    if push_message "${error_content}" "XZTTS"; then
         log_message "异常通知推送成功"
     else
         log_message "异常通知推送失败"
@@ -940,7 +940,7 @@ if ! push_content=$(build_push_content) || [ -z "${push_content}" ]; then
 fi
 
 log_message "检测到 ${changes_count} 项小红书数据变化"
-if push_message "${push_content}" "XHSZTTS"; then
+if push_message "${push_content}" "XZTTS"; then
     if ! save_current_state; then
         log_message "错误：推送成功但 JSON 状态保存失败，下次可能重复推送"
         exit 1

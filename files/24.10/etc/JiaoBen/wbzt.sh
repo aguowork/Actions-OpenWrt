@@ -371,7 +371,7 @@ notify_error() {
 
     printf '%s %s\n' "${error_key}" "${now}" > "${ERROR_STATE_FILE}" 2>/dev/null || true
     error_content=$(printf '脚本异常通知\n\n错误信息：%s\n\n相同异常将在 6 小时内静默。' "${error_message}")
-    if push_message "${error_content}" "ZXZTTS"; then
+    if push_message "${error_content}" "WZTTS"; then
         log_message "异常通知推送成功"
     else
         log_message "异常通知推送失败"
@@ -615,7 +615,7 @@ done
 
 log_message "检测到微博数据变化：${change_log}"
 
-if push_message "${push_content}" "ZXZTTS"; then
+if push_message "${push_content}" "WZTTS"; then
     if ! save_state \
         "${statuses_count}" "${friends_count}" "${followers_count}" "${description}" \
         "${repost_count}" "${comment_count}" "${like_count}"; then

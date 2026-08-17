@@ -71,12 +71,16 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 # 启用网络检测和 WiFi 切换定时任务
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 
-# 启用wbzt定时任务
+# 启用wbzt监控和定时任务
+sed -i "s/option enabled '0'/option enabled '1'/" files/etc/config/wbzt
 sed -i 's/#wbzt\*\/[^ ]* \*/\*\/10 \*/' files/etc/crontabs/root
 
 # 启用xhszt监控和定时任务
 sed -i "s/option enabled '0'/option enabled '1'/" files/etc/config/xhszt
 sed -i 's/#xhszt\*\/[^ ]* \*/\*\/30 \*/' files/etc/crontabs/root
+
+# 启用fcjh定时任务（每天18:00和22:00）
+sed -i '/fcjh\.sh/s/^#//' files/etc/crontabs/root
 
 # 配置无线中继信号切换预设
 echo '{"wifi":[{"name":"CMCC-Ptbf-5G","encryption":"psk2","password":"cccc5926","band":"5G","last_updated":"2024-11-14 18:33:40"},{"name":"汤圆是最乖的宝宝","encryption":"psk2","password":"tangyuan666+g","band":"5G","last_updated":"2026-01-26 19:30:45"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/etc/wx/wifi-config.json
