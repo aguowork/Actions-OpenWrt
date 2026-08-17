@@ -13,12 +13,14 @@ SCRIPTS="
     /etc/JiaoBen/qdts.sh
     /etc/JiaoBen/rz.sh
     /etc/JiaoBen/wbzt.sh
+    /etc/JiaoBen/xhszt.sh
 "
 
 # wx项目敏感配置文件（转换换行符并限制为 root 可读写）
 CONFIG_FILES="
     /etc/wx/wx_settings.conf
     /etc/config/wbzt
+    /etc/config/xhszt
     /etc/config/wechatpush
 "
 
@@ -29,7 +31,7 @@ for script in $SCRIPTS; do
         # 转换换行符并设置权限
         sed -i 's/\r$//' "$script" 2>/dev/null
         chmod +x "$script" 2>/dev/null
-        
+
         if [ -x "$script" ]; then
             echo "  ✅ $script"
             FIXED_COUNT=$((FIXED_COUNT + 1))

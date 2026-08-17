@@ -9,7 +9,9 @@ SCRIPT_ID="${SCRIPT_NAME%.sh}"
 
 LOG_FILE="${WBZT_LOG_FILE:-/tmp/${SCRIPT_ID}.log}"
 STATE_FILE="${WBZT_STATE_FILE:-${SCRIPT_DIR}/${SCRIPT_ID}.state.json}"
-MAX_LOG_SIZE="${WBZT_MAX_LOG_SIZE_KB:-100}"
+# 日志位于 /tmp 内存盘，同时按行数和字节数保留最近记录。
+MAX_LOG_SIZE_KB="${WBZT_MAX_LOG_SIZE_KB:-64}"
+MAX_LOG_LINES="${WBZT_MAX_LOG_LINES:-500}"
 STATE_VERSION=2
 
 WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
@@ -78,16 +80,49 @@ log_message() {
 
 check_log_file() {
     local file_size
+    local line_count
+    local max_bytes
+    local temp_file
+    local tail_status
+
+    [ "${MAX_LOG_SIZE_KB}" -gt 0 ] 2>/dev/null || MAX_LOG_SIZE_KB=64
+    [ "${MAX_LOG_LINES}" -gt 0 ] 2>/dev/null || MAX_LOG_LINES=500
 
     if [ ! -e "${LOG_FILE}" ]; then
         : > "${LOG_FILE}" || return 1
         return 0
     fi
 
-    file_size=$(du -k "${LOG_FILE}" 2>/dev/null | cut -f1)
-    if [ -n "${file_size}" ] && [ "${file_size}" -gt "${MAX_LOG_SIZE}" ] 2>/dev/null; then
-        : > "${LOG_FILE}" || return 1
-        log_message "日志文件超过 ${MAX_LOG_SIZE}KB，已清空"
+    if ! file_size=$(wc -c < "${LOG_FILE}" 2>/dev/null) || \
+       ! line_count=$(wc -l < "${LOG_FILE}" 2>/dev/null); then
+        return 1
+    fi
+    max_bytes=$((10#${MAX_LOG_SIZE_KB} * 1024))
+    if [ "${file_size}" -le "${max_bytes}" ] && \
+       [ "${line_count}" -le "${MAX_LOG_LINES}" ]; then
+        return 0
+    fi
+
+    temp_file=$(mktemp "${LOG_FILE}.rotate.XXXXXX") || return 1
+    tail -n "${MAX_LOG_LINES}" "${LOG_FILE}" | \
+        tail -c "${max_bytes}" > "${temp_file}"
+    tail_status="${PIPESTATUS[*]}"
+    if [ "${tail_status}" != "0 0" ]; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+    if ! file_size=$(wc -c < "${temp_file}" 2>/dev/null); then
+        rm -f "${temp_file}"
+        return 1
+    fi
+    if [ "${file_size}" -eq "${max_bytes}" ] && ! sed -i '1d' "${temp_file}"; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+
+    if ! mv "${temp_file}" "${LOG_FILE}"; then
+        rm -f "${temp_file}"
+        return 1
     fi
     return 0
 }
