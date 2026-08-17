@@ -1,270 +1,594 @@
 #!/bin/bash
 
-SCRIPT_DIR=$(dirname "$(readlink -f "$0")") # 获取当前脚本所在目录
-LOG_FILE="${SCRIPT_DIR}/$(basename $0 .sh).log" # 日志文件的存储路径
-MAX_LOG_SIZE="100"                      # 日志文件最大大小，单位为KB
-PUSH_API_URL="https://wxpusher.zjiecode.com/api/send/message"
-APP_TOKEN="${WXPUSHER_TOKEN}"
-MY_UID="UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"
-# 移除未使用的TOPIC_ID变量，保持与qdts.sh一致
-KEY_FORMAT='#Key=".*-.*-.*-.*-.*-.*-.*"' # 日志文件第一行格式吗，正则表达式
+umask 077
 
-# 微博用户ID解码（Base64编码隐藏真实ID）
-WEIBO_UID_B64="MzE5MjM2MjUyMg=="
-WEIBO_UID=$(echo "$WEIBO_UID_B64" | base64 -d 2>/dev/null)
-if [ -z "$WEIBO_UID" ]; then
-    echo "错误：配置解码失败"
-    exit 1
-fi
-# 设置错误处理的 trap
-trap 'handle_error' ERR
+SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")
+SCRIPT_DIR=$(dirname "${SCRIPT_PATH}")
+SCRIPT_NAME=$(basename "${SCRIPT_PATH}")
+SCRIPT_ID="${SCRIPT_NAME%.sh}"
 
-# 错误处理函数
-handle_error() {
-    # 获取最后一次命令的退出状态
-    local last_exit_status=$?
-    # 获取错误发生的函数名
-    local func_name=${FUNCNAME[1]}  # 获取调用 handle_error 的函数名，通常是发生错误的函数
-    # 获取错误发生的行号
-    local line_number=${BASH_LINENO[0]}
+LOG_FILE="${WBZT_LOG_FILE:-/tmp/${SCRIPT_ID}.log}"
+STATE_FILE="${WBZT_STATE_FILE:-${SCRIPT_DIR}/${SCRIPT_ID}.state.json}"
+MAX_LOG_SIZE="${WBZT_MAX_LOG_SIZE_KB:-100}"
+STATE_VERSION=2
 
-    if [ "$last_exit_status" != "0" ]; then
-        log_message "发生错误：错误发生在函数 $func_name 的第 $line_number 行。已停止脚本执行，请检查脚本！"
-        exit 1
-    fi
-}
+WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
+PUSH_API_URL_DEFAULT="https://wxpusher.zjiecode.com/api/send/message"
+WEIBO_API_URL_DEFAULT="https://weibo.com/ajax/profile/info"
+WEIBO_VISITOR_GEN_URL="https://passport.weibo.com/visitor/genvisitor"
+WEIBO_VISITOR_URL="https://passport.weibo.com/visitor/visitor"
 
-# 日志记录函数
-log_message() {
-    local msg="$1"
-    echo "$(date "+%Y-%m-%d %H:%M:%S") - $msg" | tee -a "${LOG_FILE}"
-}
+LOCK_DIR="${WBZT_LOCK_DIR:-/tmp/${SCRIPT_NAME}.lock}"
+ERROR_STATE_FILE="${WBZT_ERROR_STATE_FILE:-/tmp/${SCRIPT_NAME}.error}"
+ERROR_NOTIFY_INTERVAL="${WBZT_ERROR_NOTIFY_INTERVAL:-21600}"
+VISITOR_COOKIE_FILE="${WBZT_VISITOR_COOKIE_FILE:-/tmp/${SCRIPT_NAME}.visitor.cookie}"
 
-# 推送消息函数（升级版）
-push_message() {
-    local title="$1"
-    local content="$2"
-    local summary="$3"
-    
-    # 使用jq工具构建JSON数据，确保正确转义
-    local json_data=$(jq -n \
-        --arg appToken "$APP_TOKEN" \
-        --arg content "$content" \
-        --arg summary "$summary" \
-        --arg contentType "2" \
-        --arg uid "$MY_UID" \
-        '{
-            appToken: $appToken,
-            content: $content,
-            summary: $summary,
-            contentType: ($contentType | tonumber),
-            uids: [$uid]
-        }')
-    
-    # 发送 POST 请求，设置超时
-    local response=$(curl -s -w "%{http_code}" --connect-timeout 10 --max-time 15 -X POST -H "Content-Type: application/json" -d "$json_data" "$PUSH_API_URL" 2>&1)
-    local http_code=$(echo "$response" | grep -o '[0-9]\{3\}$' | head -1)
-    
-    # 检查 HTTP 状态码
-    if [ "$http_code" = "200" ]; then
-        log_message "推送消息成功"
+acquire_lock() {
+    local previous_pid
+
+    if mkdir "${LOCK_DIR}" 2>/dev/null; then
+        if ! printf '%s\n' "$$" > "${LOCK_DIR}/pid"; then
+            rmdir "${LOCK_DIR}" 2>/dev/null || true
+            return 1
+        fi
         return 0
-    else
-        log_message "推送消息失败，HTTP状态码: $http_code"
+    fi
+
+    if [ ! -r "${LOCK_DIR}/pid" ]; then
         return 1
     fi
+
+    previous_pid=$(cat "${LOCK_DIR}/pid" 2>/dev/null)
+    if [ -n "${previous_pid}" ] && kill -0 "${previous_pid}" 2>/dev/null; then
+        return 1
+    fi
+
+    rm -f "${LOCK_DIR}/pid" 2>/dev/null
+    rmdir "${LOCK_DIR}" 2>/dev/null || return 1
+    if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+        return 1
+    fi
+    if ! printf '%s\n' "$$" > "${LOCK_DIR}/pid"; then
+        rmdir "${LOCK_DIR}" 2>/dev/null || true
+        return 1
+    fi
+    return 0
 }
 
-# 推送异常通知函数
-push_error_notification() {
-    local error_msg="$1"
-    local error_content="脚本异常通知\n\n错误信息：$error_msg\n\n请检查脚本状态！"
-    
-    # 推送异常通知（明文显示，不加密）
-    if push_message "脚本异常通知" "$error_content" "脚本异常通知"; then
+cleanup_lock() {
+    local lock_pid
+
+    lock_pid=$(cat "${LOCK_DIR}/pid" 2>/dev/null)
+    if [ "${lock_pid}" = "$$" ]; then
+        rm -f "${LOCK_DIR}/pid" 2>/dev/null || true
+        rmdir "${LOCK_DIR}" 2>/dev/null || true
+    fi
+}
+
+if ! acquire_lock; then
+    exit 0
+fi
+trap cleanup_lock EXIT
+trap 'exit 130' HUP INT TERM
+
+log_message() {
+    local msg="$1"
+    printf '%s - %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${msg}" | tee -a "${LOG_FILE}"
+}
+
+check_log_file() {
+    local file_size
+
+    if [ ! -e "${LOG_FILE}" ]; then
+        : > "${LOG_FILE}" || return 1
+        return 0
+    fi
+
+    file_size=$(du -k "${LOG_FILE}" 2>/dev/null | cut -f1)
+    if [ -n "${file_size}" ] && [ "${file_size}" -gt "${MAX_LOG_SIZE}" ] 2>/dev/null; then
+        : > "${LOG_FILE}" || return 1
+        log_message "日志文件超过 ${MAX_LOG_SIZE}KB，已清空"
+    fi
+    return 0
+}
+
+load_settings() {
+    if [ -r "${WXPUSHER_SETTINGS_FILE}" ]; then
+        # 配置文件由 root 管理，并由管理页面进行安全转义。
+        # shellcheck disable=SC1090
+        . "${WXPUSHER_SETTINGS_FILE}"
+    fi
+
+    WXPUSHER_ENABLED="${WXPUSHER_ENABLED:-0}"
+    APP_TOKEN="${WX_APP_TOKEN:-}"
+    MY_UID="${WX_MY_UID:-}"
+    PUSH_API_URL="${WXPUSHER_API_URL:-${PUSH_API_URL_DEFAULT}}"
+
+    if [ -z "${WBZT_ENABLED+x}" ]; then
+        WBZT_ENABLED=$(uci -q get wbzt.main.enabled 2>/dev/null || printf '0')
+    fi
+    if [ -z "${WEIBO_UID+x}" ] && [ -z "${WEIBO_UID_B64+x}" ]; then
+        WEIBO_UID_B64=$(uci -q get wbzt.main.uid_b64 2>/dev/null || true)
+    fi
+    WBZT_ENABLED="${WBZT_ENABLED:-0}"
+    WEIBO_UID_B64="${WEIBO_UID_B64:-}"
+    WEIBO_API_URL="${WEIBO_API_URL:-${WEIBO_API_URL_DEFAULT}}"
+}
+
+jsonp_to_json() {
+    printf '%s' "$1" | sed -n 's/^[^(]*(\(.*\));[[:space:]]*$/\1/p'
+}
+
+generate_visitor_cookie() {
+    local fingerprint
+    local response
+    local response_json
+    local tid
+    local sub
+    local subp
+    local temp_file
+    local curl_status
+
+    fingerprint='{"os":"1","browser":"Chrome130,0,0,0","fonts":"undefined","screenInfo":"1920*1080*24","plugins":""}'
+    response=$(curl -fsS \
+        --connect-timeout 10 --max-time 20 \
+        --retry 2 --retry-delay 2 --retry-connrefused --retry-max-time 45 \
+        -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36' \
+        --data-urlencode 'cb=gen_callback' \
+        --data-urlencode "fp=${fingerprint}" \
+        "${WEIBO_VISITOR_GEN_URL}" 2>/dev/null)
+    curl_status=$?
+    if [ "${curl_status}" -ne 0 ] || [ -z "${response}" ]; then
+        return 1
+    fi
+
+    response_json=$(jsonp_to_json "${response}")
+    tid=$(printf '%s' "${response_json}" | jq -r \
+        'if .retcode == 20000000 then (.data.tid // "") else "" end' 2>/dev/null)
+    if [ -z "${tid}" ]; then
+        return 1
+    fi
+
+    response=$(curl -fsS -G \
+        --connect-timeout 10 --max-time 20 \
+        --retry 2 --retry-delay 2 --retry-connrefused --retry-max-time 45 \
+        -H 'referer: https://weibo.com/' \
+        -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36' \
+        --data-urlencode 'a=incarnate' \
+        --data-urlencode "t=${tid}" \
+        --data-urlencode 'w=2' \
+        --data-urlencode 'c=095' \
+        --data-urlencode 'gc=' \
+        --data-urlencode 'cb=cross_domain' \
+        --data-urlencode 'from=weibo' \
+        --data-urlencode "_rand=$(date +%s)" \
+        "${WEIBO_VISITOR_URL}" 2>/dev/null)
+    curl_status=$?
+    if [ "${curl_status}" -ne 0 ] || [ -z "${response}" ]; then
+        return 1
+    fi
+
+    response_json=$(jsonp_to_json "${response}")
+    sub=$(printf '%s' "${response_json}" | jq -r \
+        'if .retcode == 20000000 then (.data.sub // "") else "" end' 2>/dev/null)
+    subp=$(printf '%s' "${response_json}" | jq -r \
+        'if .retcode == 20000000 then (.data.subp // "") else "" end' 2>/dev/null)
+    if [ -z "${sub}" ]; then
+        return 1
+    fi
+
+    temp_file=$(mktemp "${VISITOR_COOKIE_FILE}.tmp.XXXXXX") || return 1
+    if [ -n "${subp}" ]; then
+        printf 'SUB=%s; SUBP=%s\n' "${sub}" "${subp}" > "${temp_file}"
+    else
+        printf 'SUB=%s\n' "${sub}" > "${temp_file}"
+    fi
+    if ! mv "${temp_file}" "${VISITOR_COOKIE_FILE}"; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+
+    IFS= read -r WEIBO_COOKIE < "${VISITOR_COOKIE_FILE}" || return 1
+    log_message "微博匿名访客 Cookie 已自动刷新"
+    return 0
+}
+
+load_visitor_cookie() {
+    if [ -s "${VISITOR_COOKIE_FILE}" ]; then
+        IFS= read -r WEIBO_COOKIE < "${VISITOR_COOKIE_FILE}" || true
+        if [ -n "${WEIBO_COOKIE}" ]; then
+            return 0
+        fi
+    fi
+    generate_visitor_cookie
+}
+
+refresh_visitor_cookie() {
+    rm -f "${VISITOR_COOKIE_FILE}" 2>/dev/null || true
+    generate_visitor_cookie
+}
+
+fetch_weibo_data() {
+    json_data=$(curl -sS \
+        --connect-timeout 10 --max-time 30 \
+        --retry 2 --retry-delay 2 --retry-connrefused --retry-max-time 60 \
+        "${WEIBO_API_URL}?uid=${WEIBO_UID}" \
+        -H "cookie: ${WEIBO_COOKIE}" \
+        -H "referer: https://weibo.com/u/${WEIBO_UID}" \
+        -H 'accept: application/json, text/plain, */*' \
+        -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36' \
+        2>/dev/null)
+    curl_status=$?
+    [ "${curl_status}" -eq 0 ] && [ -n "${json_data}" ]
+}
+
+validate_weibo_response() {
+    printf '%s' "${json_data}" | jq -e '
+        .ok == 1 and
+        .data.user != null and
+        .data.user.statuses_count != null and
+        .data.user.friends_count != null and
+        .data.user.followers_count != null and
+        .data.user.status_total_counter.repost_cnt != null and
+        .data.user.status_total_counter.comment_cnt != null and
+        .data.user.status_total_counter.like_cnt != null
+    ' >/dev/null 2>&1
+}
+
+push_message() {
+    local content="$1"
+    local summary="$2"
+    local encoded_content
+    local html_content
+    local json_data
+    local response_file
+    local http_code
+    local curl_status
+    local business_code
+    local business_message
+
+    if [ "${WXPUSHER_ENABLED}" != "1" ] || [ -z "${APP_TOKEN}" ] || [ -z "${MY_UID}" ]; then
+        log_message "推送失败：WxPusher 尚未启用或配置不完整"
+        return 1
+    fi
+
+    encoded_content=$(printf '%s' "${content}" | base64 2>/dev/null | tr -d '\r\n')
+    if [ -z "${encoded_content}" ]; then
+        log_message "推送失败：Base64 编码失败，已拒绝发送明文"
+        return 1
+    fi
+    html_content="<copy data-clipboard-text=\"${encoded_content}\">${encoded_content}</copy>"
+
+    if ! json_data=$(jq -n \
+            --arg appToken "${APP_TOKEN}" \
+            --arg content "${html_content}" \
+            --arg summary "${summary}" \
+            --arg uid "${MY_UID}" \
+            '{
+                appToken: $appToken,
+                content: $content,
+                summary: $summary,
+                contentType: 2,
+                uids: [$uid]
+            }' 2>/dev/null); then
+        log_message "推送失败：消息 JSON 构建失败"
+        return 1
+    fi
+
+    response_file=$(mktemp "/tmp/${SCRIPT_ID}.push.XXXXXX") || {
+        log_message "推送失败：无法创建临时响应文件"
+        return 1
+    }
+
+    http_code=$(curl -sS -o "${response_file}" -w '%{http_code}' \
+        --connect-timeout 10 --max-time 20 \
+        -X POST -H 'Content-Type: application/json' \
+        -d "${json_data}" "${PUSH_API_URL}" 2>/dev/null)
+    curl_status=$?
+
+    if [ "${curl_status}" -ne 0 ]; then
+        rm -f "${response_file}"
+        log_message "推送失败：无法连接 WxPusher（curl ${curl_status}）"
+        return 1
+    fi
+
+    if [ "${http_code}" != "200" ]; then
+        rm -f "${response_file}"
+        log_message "推送失败：HTTP 状态码 ${http_code}"
+        return 1
+    fi
+
+    if ! jq -e '.code == 1000 and .success == true' "${response_file}" >/dev/null 2>&1; then
+        business_code=$(jq -r '.code // "未知"' "${response_file}" 2>/dev/null)
+        business_message=$(jq -r '.msg // "响应格式无效"' "${response_file}" 2>/dev/null)
+        rm -f "${response_file}"
+        log_message "推送失败：WxPusher 业务码 ${business_code}，${business_message}"
+        return 1
+    fi
+
+    rm -f "${response_file}"
+    log_message "推送消息成功"
+    return 0
+}
+
+notify_error() {
+    local error_key="$1"
+    local error_message="$2"
+    local now
+    local previous_key=""
+    local previous_time="0"
+    local error_content
+
+    log_message "${error_message}"
+    now=$(date +%s)
+
+    if [ -r "${ERROR_STATE_FILE}" ]; then
+        read -r previous_key previous_time < "${ERROR_STATE_FILE}" || true
+    fi
+    case "${previous_time}" in
+        ''|*[!0-9]*) previous_time=0 ;;
+    esac
+
+    if [ "${previous_key}" = "${error_key}" ] && \
+       [ $((now - previous_time)) -lt "${ERROR_NOTIFY_INTERVAL}" ]; then
+        return 0
+    fi
+
+    printf '%s %s\n' "${error_key}" "${now}" > "${ERROR_STATE_FILE}" 2>/dev/null || true
+    error_content=$(printf '脚本异常通知\n\n错误信息：%s\n\n相同异常将在 6 小时内静默。' "${error_message}")
+    if push_message "${error_content}" "ZXZTTS"; then
         log_message "异常通知推送成功"
     else
         log_message "异常通知推送失败"
     fi
 }
 
-# 检查日志文件是否存在，不存在则创建日志文件
-check_log_file() {
-    if [ ! -e "${LOG_FILE}" ]; then
-        touch "${LOG_FILE}"
-        echo "#Key=\"100-200-300-400-500-600-700\"" > "${LOG_FILE}"
-        echo "日志文件不存在，已创建并且写入默认值"
-    else
-        # 检查日志文件大小
-        FILE_SIZE=$(du -k "${LOG_FILE}" | cut -f1)
-        if [ "${FILE_SIZE}" -gt "${MAX_LOG_SIZE}" ]; then
-            > "${LOG_FILE}"  # 清空日志文件
-            echo "文件大小超过最大值，已清空"
-        fi
-
-        # 检查日志文件第一行是否符合格式
-        FIRST_LINE=$(head -n 1 "${LOG_FILE}")
-        if ! [[ "${FIRST_LINE}" =~ ${KEY_FORMAT} ]]; then
-            # 创建一个临时文件并写入新内容
-            TEMP_FILE=$(mktemp)
-            echo "#Key=\"100-200-300-400-500-600-700\"" > "${TEMP_FILE}"
-            cat "${LOG_FILE}" >> "${TEMP_FILE}"
-            mv "${TEMP_FILE}" "${LOG_FILE}"
-            echo "日志文件第一行不符合格式，已插入默认值"
-        fi
-    fi
+clear_error_state() {
+    rm -f "${ERROR_STATE_FILE}" 2>/dev/null || true
 }
 
+validate_state_file() {
+    [ -s "${STATE_FILE}" ] || return 1
+    jq -e --argjson version "${STATE_VERSION}" '
+        type == "object" and
+        .version == $version and
+        (.updated_at | type == "string") and
+        (.statuses_count | type == "string") and
+        (.friends_count | type == "string") and
+        (.followers_count | type == "string") and
+        (.description | type == "string") and
+        (.repost_count | type == "string") and
+        (.comment_count | type == "string") and
+        (.like_count | type == "string")
+    ' "${STATE_FILE}" >/dev/null 2>&1
+}
 
-# 检查互联网连通性
-check_internet() {
-    if curl -s --head "223.5.5.5" >/dev/null; then
-        return 0
-    else
+load_state() {
+    if [ ! -e "${STATE_FILE}" ]; then
         return 1
     fi
+    if ! validate_state_file; then
+        log_message "警告：状态文件格式无效，将使用当前数据重新初始化"
+        return 1
+    fi
+
+    old_statuses_count=$(jq -r '.statuses_count' "${STATE_FILE}" 2>/dev/null) || return 1
+    old_friends_count=$(jq -r '.friends_count' "${STATE_FILE}" 2>/dev/null) || return 1
+    old_followers_count=$(jq -r '.followers_count' "${STATE_FILE}" 2>/dev/null) || return 1
+    old_description=$(jq -r '.description' "${STATE_FILE}" 2>/dev/null) || return 1
+    old_repost_count=$(jq -r '.repost_count' "${STATE_FILE}" 2>/dev/null) || return 1
+    old_comment_count=$(jq -r '.comment_count' "${STATE_FILE}" 2>/dev/null) || return 1
+    old_like_count=$(jq -r '.like_count' "${STATE_FILE}" 2>/dev/null) || return 1
+    return 0
 }
 
-check_internet #检查互联网连通性
-check_log_file #检查日志文件是否存在，不存在则创建日志文件
+save_state() {
+    local temp_file
+    local updated_at
 
-# 执行 curl 命令，并将输出保存到 json 变量中
-json_data=$(curl "https://weibo.com/ajax/profile/info?uid=$WEIBO_UID" \
-  -H 'cookie: __itrace_wid=8b97545f-536c-4071-0b4f-30e09d22a6b8; SINAGLOBAL=4230364064491.914.1742549919746; SUB=_2AkMfTHPWf8NxqwFRmfESxG7na4VxyArEieKpEIINJRMxHRl-yT9kqkIatRB6NMxdOZ69XdgFXJCd8bS6oam6zuK4Q_XK; SUBP=0033WrSXqPxfM72-Ws9jqgMF55529P9D9W5dDmhO_BzaZZOZ8jhc6ckX; ULV=1754020326257:2:1:1:1914175238695.7656.1754020326254:1742549919763; XSRF-TOKEN=RTknlgofA-SHEQ8fYz-sTldc; WBPSESS=voLfPs8eGy8pkyBjwwkfan7AknWcQRMSyA4XUzE6OS8PBLSCNPSY8WJxxC7z19gJMsV-z5Su6kyHBWbrouXl2k6iqdzcKDyFVWYKkrbbfRJ2ByllX1ffxV2HDMkhxaNka-xRm1z1uyga2FqxRJUM22IU-xn3tPAN5gQ-Gf9OBBI=' \
-  -H "referer: https://weibo.com/u/$WEIBO_UID" \
-  -H 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36')
+    updated_at=$(date '+%Y-%m-%dT%H:%M:%S%z')
+    temp_file=$(mktemp "${STATE_FILE}.tmp.XXXXXX") || return 1
+    if ! jq -n \
+            --argjson version "${STATE_VERSION}" \
+            --arg updated_at "${updated_at}" \
+            --arg statuses_count "$1" \
+            --arg friends_count "$2" \
+            --arg followers_count "$3" \
+            --arg description "$4" \
+            --arg repost_count "$5" \
+            --arg comment_count "$6" \
+            --arg like_count "$7" \
+            '{
+                version: $version,
+                updated_at: $updated_at,
+                statuses_count: $statuses_count,
+                friends_count: $friends_count,
+                followers_count: $followers_count,
+                description: $description,
+                repost_count: $repost_count,
+                comment_count: $comment_count,
+                like_count: $like_count
+            }' > "${temp_file}" 2>/dev/null; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+    if ! mv "${temp_file}" "${STATE_FILE}"; then
+        rm -f "${temp_file}"
+        return 1
+    fi
+    return 0
+}
 
-# 检查微博API请求是否成功
-if [ $? -ne 0 ] || [ -z "$json_data" ]; then
-    push_error_notification "API请求失败，可能是网络问题或API失效"
-    exit 1
-fi
-
-# 使用jq工具解析JSON数据并提取字段值
-if ! command -v jq >/dev/null 2>&1; then
-    push_error_notification "系统缺少jq工具，无法解析JSON数据"
-    exit 1
-fi
-
-statuses_count=$(echo "$json_data" | jq -r '.data.user | .statuses_count' 2>/dev/null)
-friends_count=$(echo "$json_data" | jq -r '.data.user | .friends_count' 2>/dev/null)
-followers_count_str=$(echo "$json_data" | jq -r '.data.user | .followers_count_str' 2>/dev/null)
-description=$(echo "$json_data" | jq -r '.data.user | .description' 2>/dev/null)
-repost_cnt=$(echo "$json_data" | jq -r '.data.user.status_total_counter | .repost_cnt' | tr -d ',' 2>/dev/null)
-comment_cnt=$(echo "$json_data" | jq -r '.data.user.status_total_counter | .comment_cnt' | tr -d ',' 2>/dev/null)
-like_cnt=$(echo "$json_data" | jq -r '.data.user.status_total_counter | .like_cnt' | tr -d ',' 2>/dev/null)
-
-# 检查数据解析是否成功
-if [ -z "$statuses_count" ] || [ "$statuses_count" = "null" ]; then
-    push_error_notification "数据解析失败，可能是API返回格式变化或Cookie失效"
-    exit 1
-fi
-
-
-content=$(grep -m 1 -o '#Key="[^"]*"' "${LOG_FILE}" | sed 's/#Key="//; s/"//g')
-# 按照 "-" 符号拆分字符串为数组，添加安全检查
-if [ -z "$content" ]; then
-    log_message "警告：无法从日志文件读取历史数据，使用默认值"
-    content="100-200-300-400-500-600-700"
-fi
-IFS='-' read -r -a array <<< "$content"
-# 确保数组有7个元素
-while [ ${#array[@]} -lt 7 ]; do
-    array+=("0")
-done
-
-# 获取历史值的辅助函数，遵循DRY原则
-get_old_value() {
-    local key="$1"
-    case "$key" in
-        "微博") echo "${array[0]}" ;;
-        "关注") echo "${array[1]}" ;;
-        "粉丝") echo "${array[2]}" ;;
-        "个人简介") echo "${array[3]}" ;;
-        "累计转发量") echo "${array[4]}" ;;
-        "累计评论量") echo "${array[5]}" ;;
-        "累计获赞") echo "${array[6]}" ;;
-        *) echo "0" ;;
+is_unsigned_integer() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
     esac
 }
 
-# 循环判断数值是否变化，若有变化则推送消息
-changed_items=()
-[ "$statuses_count" != "${array[0]}" ] && changed_items+=("微博:$statuses_count")
-[ "$friends_count" != "${array[1]}" ] && changed_items+=("关注:$friends_count")
-[ "$followers_count_str" != "${array[2]}" ] && changed_items+=("粉丝:$followers_count_str")
-[ "$description" != "${array[3]}" ] && changed_items+=("个人简介:$description")
-[ "$repost_cnt" != "${array[4]}" ] && changed_items+=("累计转发量:$repost_cnt")
-[ "$comment_cnt" != "${array[5]}" ] && changed_items+=("累计评论量:$comment_cnt")
-[ "$like_cnt" != "${array[6]}" ] && changed_items+=("累计获赞:$like_cnt")
+add_change() {
+    local label="$1"
+    local old_value="$2"
+    local new_value="$3"
 
-if [ ${#changed_items[@]} -gt 0 ]; then
-# 对个人简介进行安全处理，保留常用字符
-safe_description=$(echo "$description" | sed 's/["\/\\]//g' | head -c 100)
-if [ -z "$safe_description" ]; then
-    safe_description="无简介"
+    if [ "${old_value}" != "${new_value}" ]; then
+        changed_labels+=("${label}")
+        changed_old_values+=("${old_value}")
+        changed_new_values+=("${new_value}")
+    fi
+}
+
+single_line_value() {
+    printf '%s' "$1" | tr '\r\n' ' '
+}
+
+load_settings
+
+if [ "${WBZT_ENABLED}" != "1" ]; then
+    exit 0
 fi
 
-    # 写入日志文件 - 使用安全的个人简介
-    new_key="$statuses_count-$friends_count-$followers_count_str-$safe_description-$repost_cnt-$comment_cnt-$like_cnt"
-    temp_file=$(mktemp)
-    sed "s|#Key=\"$content\"|#Key=\"$new_key\"|g" "${LOG_FILE}" > "$temp_file"
-    mv "$temp_file" "${LOG_FILE}"
-    
-    # 生成推送内容
-    push_content="最新数据
-微博：$statuses_count
-关注：$friends_count
-粉丝：$followers_count_str
-个人简介：$description
-累计转发量：$repost_cnt
-累计评论量：$comment_cnt
-累计获赞：$like_cnt
+if ! check_log_file; then
+    printf '%s\n' '错误：无法初始化日志文件' >&2
+    exit 1
+fi
 
-更新了"
-    
-    # 添加变化的项目
-    change_log=""
-    for item in "${changed_items[@]}"; do
-        key=$(echo "$item" | cut -d':' -f1)
-        value=$(echo "$item" | cut -d':' -f2)
-        old_value=$(get_old_value "$key")
-        
-        push_content="$push_content
-$key：$old_value/$value"
-        
-        # 构建日志字符串
-        if [ -n "$change_log" ]; then
-            change_log="$change_log, $key $value (之前 $old_value)"
-        else
-            change_log="$key $value (之前 $old_value)"
-        fi
-    done
-    
-    # 对内容进行base64加密
-    encoded_content=""
-    if command -v base64 >/dev/null 2>&1; then
-        # 使用printf确保换行符正确处理
-        encoded_content=$(printf "%s" "$push_content" | base64 2>/dev/null)
+for required_command in base64 curl jq mktemp; do
+    if ! command -v "${required_command}" >/dev/null 2>&1; then
+        log_message "系统缺少 ${required_command}，无法继续执行"
+        exit 1
+    fi
+done
+
+if [ -z "${WEIBO_UID:-}" ]; then
+    if [ -z "${WEIBO_UID_B64}" ] || \
+       ! WEIBO_UID=$(printf '%s' "${WEIBO_UID_B64}" | base64 -d 2>/dev/null); then
+        log_message "配置错误：微博 UID Base64 无效"
+        exit 1
+    fi
+fi
+
+if [ "${WXPUSHER_ENABLED}" != "1" ] || [ -z "${APP_TOKEN}" ] || [ -z "${MY_UID}" ]; then
+    log_message "配置错误：请先在系统设置中启用并配置 WxPusher"
+    exit 1
+fi
+if ! is_unsigned_integer "${WEIBO_UID}"; then
+    log_message "配置错误：微博 UID 必须为纯数字"
+    exit 1
+fi
+
+if ! load_visitor_cookie; then
+    notify_error "weibo_visitor" "微博匿名访客 Cookie 自动获取失败"
+    exit 1
+fi
+
+if ! fetch_weibo_data; then
+    notify_error "weibo_request" "微博 API 请求失败（curl ${curl_status}），可能是网络异常或接口不可用"
+    exit 1
+fi
+
+if ! validate_weibo_response; then
+    log_message "微博访客身份可能已失效，正在自动刷新后重试"
+    if ! refresh_visitor_cookie; then
+        notify_error "weibo_visitor" "微博匿名访客 Cookie 自动刷新失败"
+        exit 1
+    fi
+    if ! fetch_weibo_data; then
+        notify_error "weibo_request" "刷新访客身份后微博 API 请求仍失败（curl ${curl_status}）"
+        exit 1
+    fi
+    if ! validate_weibo_response; then
+        notify_error "weibo_schema" "刷新访客身份后数据格式仍无效，可能是微博 API 发生变化"
+        exit 1
+    fi
+fi
+
+statuses_count=$(printf '%s' "${json_data}" | jq -r '.data.user.statuses_count' 2>/dev/null)
+friends_count=$(printf '%s' "${json_data}" | jq -r '.data.user.friends_count' 2>/dev/null)
+followers_count=$(printf '%s' "${json_data}" | jq -r '.data.user.followers_count' 2>/dev/null)
+description=$(printf '%s' "${json_data}" | jq -r '.data.user.description // ""' 2>/dev/null)
+repost_count=$(printf '%s' "${json_data}" | jq -r '.data.user.status_total_counter.repost_cnt' 2>/dev/null | tr -d ',')
+comment_count=$(printf '%s' "${json_data}" | jq -r '.data.user.status_total_counter.comment_cnt' 2>/dev/null | tr -d ',')
+like_count=$(printf '%s' "${json_data}" | jq -r '.data.user.status_total_counter.like_cnt' 2>/dev/null | tr -d ',')
+
+for count_value in \
+    "${statuses_count}" "${friends_count}" "${followers_count}" \
+    "${repost_count}" "${comment_count}" "${like_count}"; do
+    if ! is_unsigned_integer "${count_value}"; then
+        notify_error "weibo_values" "微博数量字段不是有效整数，已拒绝更新状态"
+        exit 1
+    fi
+done
+
+clear_error_state
+
+if ! load_state; then
+    if save_state \
+        "${statuses_count}" "${friends_count}" "${followers_count}" "${description}" \
+        "${repost_count}" "${comment_count}" "${like_count}"; then
+        log_message "JSON 状态文件已使用当前微博数据初始化"
+        exit 0
+    fi
+    log_message "错误：无法初始化 JSON 状态文件"
+    exit 1
+fi
+
+changed_labels=()
+changed_old_values=()
+changed_new_values=()
+
+add_change "微博" "${old_statuses_count}" "${statuses_count}"
+add_change "关注" "${old_friends_count}" "${friends_count}"
+add_change "粉丝" "${old_followers_count}" "${followers_count}"
+add_change "个人简介" "${old_description}" "${description}"
+add_change "累计转发量" "${old_repost_count}" "${repost_count}"
+add_change "累计评论量" "${old_comment_count}" "${comment_count}"
+add_change "累计获赞" "${old_like_count}" "${like_count}"
+
+if [ "${#changed_labels[@]}" -eq 0 ]; then
+    exit 0
+fi
+
+push_content="最新数据
+微博：${statuses_count}
+关注：${friends_count}
+粉丝：${followers_count}
+个人简介：${description}
+累计转发量：${repost_count}
+累计评论量：${comment_count}
+累计获赞：${like_count}
+
+本次变化"
+
+change_log=""
+for ((index = 0; index < ${#changed_labels[@]}; index++)); do
+    key=${changed_labels[$index]}
+    old_value=${changed_old_values[$index]}
+    value=${changed_new_values[$index]}
+    old_display=$(single_line_value "${old_value}")
+    value_display=$(single_line_value "${value}")
+
+    push_content="${push_content}
+${key}：${old_display} → ${value_display}"
+
+    if [ -n "${change_log}" ]; then
+        change_log="${change_log}, ${key} ${value_display}（之前 ${old_display}）"
     else
-        log_message "警告：系统不支持base64命令，使用明文显示"
-        encoded_content="$push_content"
+        change_log="${key} ${value_display}（之前 ${old_display}）"
     fi
-    
-    # 检查base64编码是否成功
-    if [ -z "$encoded_content" ]; then
-        log_message "警告：base64编码失败，使用明文显示"
-        encoded_content="$push_content"
+done
+
+log_message "检测到微博数据变化：${change_log}"
+
+if push_message "${push_content}" "ZXZTTS"; then
+    if ! save_state \
+        "${statuses_count}" "${friends_count}" "${followers_count}" "${description}" \
+        "${repost_count}" "${comment_count}" "${like_count}"; then
+        log_message "错误：推送成功但 JSON 状态保存失败，下次可能重复推送"
+        exit 1
     fi
-    
-    # 使用HTML copy标签包装加密内容
-    final_content="<copy data-clipboard-text=\"${encoded_content}\">${encoded_content}</copy>"
-    
-    # 记录日志 - 重用已构建的change_log变量
-    log_message "微博数据更新：$change_log"
-    
-    # 推送消息
-    if ! push_message "WNRGX" "$final_content" "WNRGX"; then
-        push_error_notification "数据更新推送失败，可能是推送API失效"
-    fi
+    exit 0
 fi
+
+log_message "数据更新推送失败，旧状态已保留，下次任务将继续重试"
+exit 1

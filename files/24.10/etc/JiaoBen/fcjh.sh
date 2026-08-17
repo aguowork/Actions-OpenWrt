@@ -6,6 +6,10 @@
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")") # 获取当前脚本所在目录
 LOG_FILE="${SCRIPT_DIR}/$(basename $0 .sh).log" # 日志文件的存储路径
+WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
+if [ -r "${WXPUSHER_SETTINGS_FILE}" ]; then
+    . "${WXPUSHER_SETTINGS_FILE}"
+fi
 MAX_LOG_SIZE="1000"                      # 日志文件最大大小，单位为KB
 day_of_week=$(date '+%u')  # %u 输出 1-7 表示星期一到星期天
 newline=$'\n' # 定义换行符
@@ -90,9 +94,14 @@ check_log_file() {
 
 # 定义发送消息的函数
 send_push_notification() {
-    local PUSH_URL="https://wxpusher.zjiecode.com/api/send/message"
-    local APP_TOKEN="${WXPUSHER_TOKEN}"
+    local PUSH_URL="${WXPUSHER_API_URL:-https://wxpusher.zjiecode.com/api/send/message}"
+    local APP_TOKEN="${WX_APP_TOKEN:-}"
     local TOPICIDS="33181"
+
+    if [ "${WXPUSHER_ENABLED:-0}" != "1" ] || [ -z "${APP_TOKEN}" ]; then
+        log_message "WxPusher 未启用或配置不完整，跳过推送"
+        return 1
+    fi
     # APP_TOKEN 是应用的Token
     # TOPICIDS 是主题ID
     # summary 是标题

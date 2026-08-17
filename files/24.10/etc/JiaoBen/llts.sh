@@ -8,6 +8,10 @@ exceeded_threshold="5242905" # 设置流量阈值，单位为字节，1KB=1024B
 PING_HOST="223.5.5.5"                # 用于检测互联网连通性的服务器地址
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")") # 获取当前脚本所在目录
 LOG_FILE="${SCRIPT_DIR}/$(basename $0 .sh).log" # 日志文件的存储路径
+WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
+if [ -r "${WXPUSHER_SETTINGS_FILE}" ]; then
+    . "${WXPUSHER_SETTINGS_FILE}"
+fi
 MAX_LOG_SIZE="100"                      # 日志文件最大大小，单位为KB
 #DEVICE_NAME=$(uci get system.@system[0].hostname) #设备名称
 
@@ -59,10 +63,14 @@ check_internet() {
 
 # 定义发送消息的函数
 send_push_notification() {
-    local PUSH_URL="https://wxpusher.zjiecode.com/api/send/message"
-    local APP_TOKEN="${WXPUSHER_TOKEN}"
-    local MYUIDS=("UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k")
-    local UIDS=$(IFS=, ; echo "${MYUIDS[*]}")
+    local PUSH_URL="${WXPUSHER_API_URL:-https://wxpusher.zjiecode.com/api/send/message}"
+    local APP_TOKEN="${WX_APP_TOKEN:-}"
+    local UIDS="${WX_MY_UID:-}"
+
+    if [ "${WXPUSHER_ENABLED:-0}" != "1" ] || [ -z "${APP_TOKEN}" ] || [ -z "${UIDS}" ]; then
+        log_message "WxPusher 未启用或配置不完整，跳过推送"
+        return 1
+    fi
 
     # 构建Markdown格式的消息内容
     local MESSAGE='{

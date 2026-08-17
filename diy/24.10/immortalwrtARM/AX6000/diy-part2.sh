@@ -72,7 +72,7 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
 
 # 启用wbzt定时任务
-sed -i 's/#wbzt\*\/[^ ]* \*/\*\/9 \*/' files/etc/crontabs/root
+sed -i 's/#wbzt\*\/[^ ]* \*/\*\/10 \*/' files/etc/crontabs/root
 
 # 配置无线中继信号切换预设
 echo '{"wifi":[{"name":"CMCC-Ptbf-5G","encryption":"psk2","password":"cccc5926","band":"5G","last_updated":"2024-11-14 18:33:40"},{"name":"汤圆是最乖的宝宝","encryption":"psk2","password":"tangyuan666+g","band":"5G","last_updated":"2026-01-26 19:30:45"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/etc/wx/wifi-config.json

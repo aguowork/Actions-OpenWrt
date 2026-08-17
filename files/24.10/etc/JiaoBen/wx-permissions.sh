@@ -15,9 +15,11 @@ SCRIPTS="
     /etc/JiaoBen/wbzt.sh
 "
 
-# wx项目配置文件（只需转换换行符，不需要执行权限）
+# wx项目敏感配置文件（转换换行符并限制为 root 可读写）
 CONFIG_FILES="
     /etc/wx/wx_settings.conf
+    /etc/config/wbzt
+    /etc/config/wechatpush
 "
 
 FIXED_COUNT=0
@@ -40,7 +42,8 @@ done
 for config in $CONFIG_FILES; do
     if [ -f "$config" ]; then
         sed -i 's/\r$//' "$config" 2>/dev/null
-        echo "  ✅ $config (换行符已修复)"
+        chmod 600 "$config" 2>/dev/null
+        echo "  ✅ $config (换行符已修复，权限为600)"
         FIXED_COUNT=$((FIXED_COUNT + 1))
     fi
 done

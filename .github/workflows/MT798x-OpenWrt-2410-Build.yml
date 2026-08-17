@@ -101,30 +101,10 @@ jobs:
 
     - name: 📝 加载自定义配置
       env:
-        WECHATPUSH_SC3KEY: ${{ secrets.WECHATPUSH_SC3KEY }}
-        WECHATPUSH_SC3UID: ${{ secrets.WECHATPUSH_SC3UID }}
-        WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
         DDNSTO_TOKEN: ${{ secrets.DDNSTO_TOKEN }}
       run: |
-        : "${WECHATPUSH_SC3KEY:?Missing GitHub Secret WECHATPUSH_SC3KEY}"
-        : "${WECHATPUSH_SC3UID:?Missing GitHub Secret WECHATPUSH_SC3UID}"
-        : "${WXPUSHER_TOKEN:?Missing GitHub Secret WXPUSHER_TOKEN}"
         : "${DDNSTO_TOKEN:?Missing GitHub Secret DDNSTO_TOKEN}"
         [ -e files/24.10 ] && mkdir -p openwrt/files && cp -rf files/24.10/* openwrt/files/
-        secret_templates=(
-          openwrt/files/etc/config/wechatpush
-          openwrt/files/etc/wx/wx_settings.conf
-          openwrt/files/etc/JiaoBen/wbzt.sh
-          openwrt/files/etc/JiaoBen/qdts.sh
-          openwrt/files/etc/JiaoBen/fcjh.sh
-          openwrt/files/etc/JiaoBen/llts.sh
-        )
-        for template in "${secret_templates[@]}"; do
-          if [ -f "$template" ]; then
-            envsubst '${WECHATPUSH_SC3KEY} ${WECHATPUSH_SC3UID} ${WXPUSHER_TOKEN}' < "$template" > "${template}.tmp"
-            mv "${template}.tmp" "$template"
-          fi
-        done
         cd openwrt
         # 根据设备型号选择对应的 defconfig 基础配置
         case "${{ matrix.device }}" in
@@ -298,10 +278,19 @@ jobs:
 
         # 发送通知（仅当配置了 secrets 时）
         if [ -n "${{ secrets.WXPUSHER_TOKEN }}" ] && [ -n "${{ secrets.WXPUSHER_UIDS }}" ]; then
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d "${JSON_DATA}" \
-            https://wxpusher.zjiecode.com/api/send/message || echo "通知发送失败，但不影响工作流"
+          if PUSH_RESPONSE=$(curl -fsS --connect-timeout 10 --max-time 20 \
+              -X POST -H "Content-Type: application/json" \
+              -d "${JSON_DATA}" \
+              https://wxpusher.zjiecode.com/api/send/message); then
+            if echo "${PUSH_RESPONSE}" | jq -e '.code == 1000 and .success == true' >/dev/null; then
+              echo "编译完成通知发送成功"
+            else
+              PUSH_MESSAGE=$(echo "${PUSH_RESPONSE}" | jq -r '.msg // "未知业务错误"' 2>/dev/null || true)
+              echo "::warning::通知发送失败：${PUSH_MESSAGE}"
+            fi
+          else
+            echo "::warning::通知接口连接失败，但不影响工作流"
+          fi
         else
           echo "未配置 WXPUSHER secrets，跳过通知发送"
         fi

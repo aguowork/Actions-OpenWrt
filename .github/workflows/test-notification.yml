@@ -32,7 +32,15 @@ jobs:
           \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
         }"
 
-        curl -X POST \
-          -H "Content-Type: application/json" \
+        RESPONSE=$(curl -fsS --connect-timeout 10 --max-time 20 \
+          -X POST -H "Content-Type: application/json" \
           -d "${JSON_DATA}" \
-          https://wxpusher.zjiecode.com/api/send/message 
+          https://wxpusher.zjiecode.com/api/send/message)
+
+        if ! echo "${RESPONSE}" | jq -e '.code == 1000 and .success == true' >/dev/null; then
+          MESSAGE=$(echo "${RESPONSE}" | jq -r '.msg // "未知业务错误"' 2>/dev/null || true)
+          echo "通知发送失败：${MESSAGE}"
+          exit 1
+        fi
+
+        echo "测试通知发送成功"

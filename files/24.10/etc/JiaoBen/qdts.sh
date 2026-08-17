@@ -1,13 +1,18 @@
 #!/bin/sh
 
-# 消息推送相关参数
-PUSH_API_URL="https://wxpusher.zjiecode.com/api/send/message"
-APP_TOKEN="${WXPUSHER_TOKEN}"
-MY_UID="UID_L22PV9Qdjy4q6P3d0dthW1TJiA3k"
-PING_HOST="223.5.5.5"
-DEVICE_NAME=$(uci get system.@system[0].hostname)
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 LOG_FILE="${SCRIPT_DIR}/$(basename $0 .sh).log"
+WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
+if [ -r "${WXPUSHER_SETTINGS_FILE}" ]; then
+    . "${WXPUSHER_SETTINGS_FILE}"
+fi
+
+# 消息推送相关参数由刷机后的本地配置提供，避免写入公开固件。
+PUSH_API_URL="${WXPUSHER_API_URL:-https://wxpusher.zjiecode.com/api/send/message}"
+APP_TOKEN="${WX_APP_TOKEN:-}"
+MY_UID="${WX_MY_UID:-}"
+PING_HOST="223.5.5.5"
+DEVICE_NAME=$(uci get system.@system[0].hostname)
 MAX_LOG_SIZE=10
 RETRY_INTERVAL=130
 
@@ -148,6 +153,11 @@ check_api_reachable() {
 
 # 主程序
 check_log_size
+
+if [ "${WXPUSHER_ENABLED:-0}" != "1" ] || [ -z "${APP_TOKEN}" ] || [ -z "${MY_UID}" ]; then
+    log_message "WxPusher 未启用或配置不完整，跳过启动通知"
+    exit 0
+fi
 
 # 检查依赖工具
 if ! command -v jq >/dev/null 2>&1; then
