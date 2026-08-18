@@ -120,28 +120,33 @@ jobs:
 
         [ -e files/24.10 ] && mkdir -p openwrt/files && cp -rf files/24.10/* openwrt/files/
 
-        # 私有固件：构建前将 Repository Secrets 写入监控脚本专用配置。
-        WXPUSHER_CONFIG_FILE="openwrt/files/etc/JiaoBen/wxpusher.conf"
-        if [ ! -f "${WXPUSHER_CONFIG_FILE}" ]; then
-          echo "::error::找不到 ${WXPUSHER_CONFIG_FILE}"
-          exit 1
-        fi
-        sed -i \
-          -e 's/^WXPUSHER_ENABLED=.*/WXPUSHER_ENABLED=1/' \
-          -e "s|^WX_APP_TOKEN=.*|WX_APP_TOKEN='${WXPUSHER_TOKEN}'|" \
-          -e "s|^WX_MY_UID=.*|WX_MY_UID='${WXPUSHER_UIDS}'|" \
-          "${WXPUSHER_CONFIG_FILE}"
-        chmod 600 "${WXPUSHER_CONFIG_FILE}"
-        if ! (
-          . "${WXPUSHER_CONFIG_FILE}"
-          [ "${WXPUSHER_ENABLED}" = "1" ] &&
-            [ "${WX_APP_TOKEN}" = "${WXPUSHER_TOKEN}" ] &&
-            [ "${WX_MY_UID}" = "${WXPUSHER_UIDS}" ]
-        ); then
-          echo "::error::监控脚本 WxPusher 配置写入失败"
-          exit 1
-        fi
-        echo "监控脚本 WxPusher 配置已安全写入"
+        # 私有固件：分别初始化监控脚本与网页项目的独立 WxPusher 配置。
+        WXPUSHER_CONFIG_FILES=(
+          "openwrt/files/etc/JiaoBen/wxpusher.conf"
+          "openwrt/files/etc/wx/wx_settings.conf"
+        )
+        for WXPUSHER_CONFIG_FILE in "${WXPUSHER_CONFIG_FILES[@]}"; do
+          if [ ! -f "${WXPUSHER_CONFIG_FILE}" ]; then
+            echo "::error::找不到 ${WXPUSHER_CONFIG_FILE}"
+            exit 1
+          fi
+          sed -i \
+            -e 's/^WXPUSHER_ENABLED=.*/WXPUSHER_ENABLED=1/' \
+            -e "s|^WX_APP_TOKEN=.*|WX_APP_TOKEN='${WXPUSHER_TOKEN}'|" \
+            -e "s|^WX_MY_UID=.*|WX_MY_UID='${WXPUSHER_UIDS}'|" \
+            "${WXPUSHER_CONFIG_FILE}"
+          chmod 600 "${WXPUSHER_CONFIG_FILE}"
+          if ! (
+            . "${WXPUSHER_CONFIG_FILE}"
+            [ "${WXPUSHER_ENABLED}" = "1" ] &&
+              [ "${WX_APP_TOKEN}" = "${WXPUSHER_TOKEN}" ] &&
+              [ "${WX_MY_UID}" = "${WXPUSHER_UIDS}" ]
+          ); then
+            echo "::error::WxPusher 配置写入失败：${WXPUSHER_CONFIG_FILE}"
+            exit 1
+          fi
+        done
+        echo "监控脚本与网页项目的 WxPusher 配置已安全写入"
 
         cd openwrt
         # 根据设备型号选择对应的 defconfig 基础配置
