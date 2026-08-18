@@ -16,8 +16,9 @@ SCRIPTS="
     /etc/JiaoBen/xhszt.sh
 "
 
-# wx项目敏感配置文件（转换换行符并限制为 root 可读写）
+# 网页及监控脚本的敏感配置文件（转换换行符并限制为 root 可读写）
 CONFIG_FILES="
+    /etc/JiaoBen/wxpusher.conf
     /etc/wx/wx_settings.conf
     /etc/config/wbzt
     /etc/config/xhszt

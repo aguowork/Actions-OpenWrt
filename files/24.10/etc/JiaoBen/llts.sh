@@ -8,9 +8,9 @@ exceeded_threshold="5242905" # 设置流量阈值，单位为字节，1KB=1024B
 PING_HOST="223.5.5.5"                # 用于检测互联网连通性的服务器地址
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")") # 获取当前脚本所在目录
 LOG_FILE="${SCRIPT_DIR}/$(basename $0 .sh).log" # 日志文件的存储路径
-WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
-if [ -r "${WXPUSHER_SETTINGS_FILE}" ]; then
-    . "${WXPUSHER_SETTINGS_FILE}"
+WXPUSHER_CONFIG_FILE="${WXPUSHER_CONFIG_FILE:-/etc/JiaoBen/wxpusher.conf}"
+if [ -r "${WXPUSHER_CONFIG_FILE}" ]; then
+    . "${WXPUSHER_CONFIG_FILE}"
 fi
 MAX_LOG_SIZE="100"                      # 日志文件最大大小，单位为KB
 #DEVICE_NAME=$(uci get system.@system[0].hostname) #设备名称
@@ -68,7 +68,7 @@ send_push_notification() {
     local UIDS="${WX_MY_UID:-}"
 
     if [ "${WXPUSHER_ENABLED:-0}" != "1" ] || [ -z "${APP_TOKEN}" ] || [ -z "${UIDS}" ]; then
-        log_message "WxPusher 未启用或配置不完整，跳过推送"
+        log_message "WxPusher 未启用或配置不完整，请检查 ${WXPUSHER_CONFIG_FILE}"
         return 1
     fi
 

@@ -2,12 +2,12 @@
 
 SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 LOG_FILE="${SCRIPT_DIR}/$(basename $0 .sh).log"
-WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
-if [ -r "${WXPUSHER_SETTINGS_FILE}" ]; then
-    . "${WXPUSHER_SETTINGS_FILE}"
+WXPUSHER_CONFIG_FILE="${WXPUSHER_CONFIG_FILE:-/etc/JiaoBen/wxpusher.conf}"
+if [ -r "${WXPUSHER_CONFIG_FILE}" ]; then
+    . "${WXPUSHER_CONFIG_FILE}"
 fi
 
-# 消息推送相关参数由刷机后的本地配置提供，避免写入公开固件。
+# 消息推送参数由监控脚本专用配置提供，不依赖网页项目。
 PUSH_API_URL="${WXPUSHER_API_URL:-https://wxpusher.zjiecode.com/api/send/message}"
 APP_TOKEN="${WX_APP_TOKEN:-}"
 MY_UID="${WX_MY_UID:-}"
@@ -155,7 +155,7 @@ check_api_reachable() {
 check_log_size
 
 if [ "${WXPUSHER_ENABLED:-0}" != "1" ] || [ -z "${APP_TOKEN}" ] || [ -z "${MY_UID}" ]; then
-    log_message "WxPusher 未启用或配置不完整，跳过启动通知"
+    log_message "WxPusher 未启用或配置不完整，请检查 ${WXPUSHER_CONFIG_FILE}"
     exit 0
 fi
 

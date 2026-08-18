@@ -14,7 +14,7 @@ MAX_LOG_SIZE_KB="${XHSZT_MAX_LOG_SIZE_KB:-64}"
 MAX_LOG_LINES="${XHSZT_MAX_LOG_LINES:-500}"
 STATE_VERSION=3
 
-WXPUSHER_SETTINGS_FILE="${WXPUSHER_SETTINGS_FILE:-/etc/wx/wx_settings.conf}"
+WXPUSHER_CONFIG_FILE="${WXPUSHER_CONFIG_FILE:-/etc/JiaoBen/wxpusher.conf}"
 PUSH_API_URL_DEFAULT="https://wxpusher.zjiecode.com/api/send/message"
 XHS_SHORT_BASE_URL="${XHS_SHORT_BASE_URL:-https://xhslink.cn/m}"
 XHS_PROFILE_BASE_URL="${XHS_PROFILE_BASE_URL:-https://www.xiaohongshu.com/user/profile}"
@@ -167,10 +167,10 @@ check_log_file() {
 }
 
 load_settings() {
-    if [ -r "${WXPUSHER_SETTINGS_FILE}" ]; then
-        # 配置文件由 root 管理，并由管理页面进行安全转义。
+    if [ -r "${WXPUSHER_CONFIG_FILE}" ]; then
+        # 监控脚本共用的独立配置文件，由 root 管理。
         # shellcheck disable=SC1090
-        . "${WXPUSHER_SETTINGS_FILE}"
+        . "${WXPUSHER_CONFIG_FILE}"
     fi
 
     WXPUSHER_ENABLED="${WXPUSHER_ENABLED:-0}"
@@ -841,7 +841,7 @@ if ! decode_monitor_config; then
 fi
 
 if [ "${WXPUSHER_ENABLED}" != "1" ] || [ -z "${APP_TOKEN}" ] || [ -z "${MY_UID}" ]; then
-    log_message "配置错误：请先在系统设置中启用并配置 WxPusher"
+    log_message "配置错误：请检查 ${WXPUSHER_CONFIG_FILE} 中的 WxPusher 配置"
     exit 1
 fi
 
