@@ -21,11 +21,6 @@ echo "开始处理第三方包..."
 echo "正在添加 luci-app-adguardhome..."
 git clone --depth=1 https://github.com/kongfl888/luci-app-adguardhome.git package/luci-app-adguardhome
 
-# 2. 替换 luci-app-wechatpush 为最新版本（项目中存在旧版本，需要替换）
-echo "正在替换 luci-app-wechatpush 为最新版本..."
-rm -rf feeds/luci/applications/luci-app-wechatpush
-git clone --depth=1 https://github.com/aguowork/luci-app-wechatpush.git feeds/luci/applications/luci-app-wechatpush
-
 echo "第三方包处理完成！"
 
 # ============================================
