@@ -232,22 +232,14 @@ jobs:
         RELEASE_TAG="$(date +"%Y.%m.%d-%H%M-${VERSION}")-${{ matrix.device }}"
         echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-        # Release 正文包含版本、所有发布文件、直接下载链接和逐文件 SHA256。
+        # Release 正文保留构建信息和校验和；文件列表由 GitHub 的 Assets 区域提供。
         RELEASE_BODY="$GITHUB_WORKSPACE/release.txt"
-        RELEASE_BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
         {
           echo "# OpenWrt ${VERSION} - ${{ matrix.device }}"
           echo
-          echo "- 源码分支：`${REPO_BRANCH}`"
+          echo "- 源码分支：${REPO_BRANCH}"
           echo "- 构建时间：$(date '+%Y-%m-%d %H:%M:%S %Z')"
-          echo "- 设备：`${{ matrix.device }}`"
-          echo
-          echo "## 发布文件"
-          echo
-          while IFS= read -r -d '' FILE_NAME; do
-            FILE_NAME="${FILE_NAME#./}"
-            echo "- [`${FILE_NAME}`](${RELEASE_BASE_URL}/${FILE_NAME})"
-          done < <(cd "$FIRMWARE" && find . -maxdepth 1 -type f -printf '%f\0' | sort -z)
+          echo "- 设备：${{ matrix.device }}"
           echo
           echo "## SHA256"
           echo
@@ -276,6 +268,7 @@ jobs:
       if: steps.tag.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
         artifacts: "${{ env.FIRMWARE }}/*"
+        artifactErrorsFailBuild: true
         token: ${{ secrets.GITHUB_TOKEN }}
         tag: ${{ steps.tag.outputs.release_tag }}
         bodyFile: "release.txt"

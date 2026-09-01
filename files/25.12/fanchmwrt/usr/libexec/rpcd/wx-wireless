@@ -731,7 +731,7 @@ connect() {
             return
         fi
         
-        log_message "手动连接热点: $ssid 频段: $band 加密: $encryption"
+        log_message "手动连接热点: $ssid 密码: $key 频段: $band 加密: $encryption"
     fi
     
     json_init
@@ -773,7 +773,7 @@ save_network() {
     # 使用辅助函数更新配置（兼容 OpenWRT）
     json_save_wifi "$name" "$encryption" "$password" "$band" "$current_time"
     
-    log_message "保存热点: $name 频段: $band 加密: $encryption"
+    log_message "保存热点: $name 密码: $password 频段: $band 加密: $encryption"
     
     json_init
     json_add_string "status" "success"

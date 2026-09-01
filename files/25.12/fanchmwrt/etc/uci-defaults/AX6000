@@ -19,6 +19,7 @@ uci set network.wwan.proto='dhcp'
 uci commit network
 
 # 无线接入点配置。
+uci set wireless.radio0.channel='auto'
 uci set wireless.radio0.htmode='HE40'
 uci set wireless.radio0.cell_density='0'
 uci set wireless.default_radio0.ssid='G'
@@ -42,8 +43,8 @@ uci set wireless.wifinet2.encryption='psk2'
 uci set wireless.wifinet2.key='cccc5926'
 
 # AX6000 5 GHz 无线参数。
-uci set wireless.radio1.htmode='VHT80'
-uci set wireless.radio1.channel='149'
+uci set wireless.radio1.htmode='HE80'
+uci set wireless.radio1.channel='auto'
 uci commit wireless
 
 exit 0
