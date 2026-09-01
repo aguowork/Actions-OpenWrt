@@ -17,6 +17,15 @@
 
 echo "开始处理第三方包..."
 
+# 移除 ImmortalWrt/LuCI 中的旧版 luci-app-appfilter，并引入最新版 OAF。
+# feeds install -a 会创建 package/feeds/luci 下的链接，因此两处都清理。
+echo "正在替换 luci-app-appfilter 为最新版 OpenAppFilter..."
+rm -rf package/feeds/luci/luci-app-appfilter \
+       feeds/luci/applications/luci-app-appfilter \
+       package/luci-app-appfilter \
+       package/OpenAppFilter
+git clone --depth=1 https://github.com/destan19/OpenAppFilter.git package/OpenAppFilter
+
 # 1. 添加 luci-app-adguardhome（项目中不存在，直接添加）
 echo "正在添加 luci-app-adguardhome..."
 git clone --depth=1 https://github.com/kongfl888/luci-app-adguardhome.git package/luci-app-adguardhome
