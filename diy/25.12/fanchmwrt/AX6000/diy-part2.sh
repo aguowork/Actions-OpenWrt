@@ -65,8 +65,8 @@ echo "开始配置脚本和定时任务..."
 # 启用开机延迟执行脚本
 sed -i "s/#qdts~//g" files/etc/rc.local
 
-# 暂不启用网络检测和 WiFi 切换定时任务，待确认 25.12 适配后再开启。
-# sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/11 \*/' files/etc/crontabs/root
+# 启用网络检测和 WiFi 自动切换定时任务（每 11 分钟执行一次）。
+sed -i 's|^#zjwifi\*/11 \* \* \* \*|*/11 * * * *|' files/etc/crontabs/root
 
 # 启用wbzt监控和定时任务
 sed -i "s/option enabled '0'/option enabled '1'/" files/etc/config/wbzt
@@ -109,6 +109,8 @@ echo "设置wx项目脚本执行权限..."
 chmod +x files/www/cgi-bin/wx-auth.sh 2>/dev/null || true
 chmod +x files/usr/libexec/rpcd/wx-wireless 2>/dev/null || true
 chmod +x files/etc/wx/uninstall.sh 2>/dev/null || true
+# uci-defaults 只会执行可执行脚本，确保 AX6000 首次启动配置能够运行。
+chmod +x files/etc/uci-defaults/AX6000 2>/dev/null || true
 echo "wx项目权限设置完成！"
 
 echo "=========================================="
