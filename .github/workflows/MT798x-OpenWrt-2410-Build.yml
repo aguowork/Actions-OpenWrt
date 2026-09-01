@@ -104,10 +104,14 @@ jobs:
         DDNSTO_TOKEN: ${{ secrets.DDNSTO_TOKEN }}
         WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
         WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
+        WECHATPUSH_SC3KEY: ${{ secrets.WECHATPUSH_SC3KEY }}
+        WECHATPUSH_SC3UID: ${{ secrets.WECHATPUSH_SC3UID }}
       run: |
         : "${DDNSTO_TOKEN:?Missing GitHub Secret DDNSTO_TOKEN}"
         : "${WXPUSHER_TOKEN:?Missing GitHub Secret WXPUSHER_TOKEN}"
         : "${WXPUSHER_UIDS:?Missing GitHub Secret WXPUSHER_UIDS}"
+        : "${WECHATPUSH_SC3KEY:?Missing GitHub Secret WECHATPUSH_SC3KEY}"
+        : "${WECHATPUSH_SC3UID:?Missing GitHub Secret WECHATPUSH_SC3UID}"
 
         if [[ ! "${WXPUSHER_TOKEN}" =~ ^AT_[A-Za-z0-9_-]+$ ]]; then
           echo "::error::GitHub Secret WXPUSHER_TOKEN 格式无效"
@@ -147,6 +151,20 @@ jobs:
           fi
         done
         echo "监控脚本与网页项目的 WxPusher 配置已安全写入"
+
+        # ==================== 写入 ServerChan 3.0 配置 ====================
+        WECHAT_CONFIG="openwrt/files/etc/config/wechatpush"
+        if [ -f "$WECHAT_CONFIG" ]; then
+          sed -i \
+            -e "s|^	option sc3key .*|	option sc3key '${WECHATPUSH_SC3KEY}'|" \
+            -e "s|^	option sc3uid .*|	option sc3uid '${WECHATPUSH_SC3UID}'|" \
+            "$WECHAT_CONFIG"
+          chmod 600 "$WECHAT_CONFIG"
+          echo "wechatpush sc3key/sc3uid 已写入"
+        else
+          echo "::error::找不到 ${WECHAT_CONFIG}"
+          exit 1
+        fi
 
         cd openwrt
         # 根据设备型号选择对应的 defconfig 基础配置
