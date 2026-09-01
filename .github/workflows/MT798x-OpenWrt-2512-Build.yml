@@ -40,6 +40,9 @@ env:
   UPLOAD_RELEASE: true   # 是否发布 Release
   TZ: Asia/Shanghai     # 时区设置
 
+permissions:
+  contents: write       # 创建 Release 并上传固件资产
+
 jobs:
   build:
     runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 作为构建环境
@@ -226,8 +229,39 @@ jobs:
       id: tag
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M-${VERSION}")-${{ matrix.device }}" >> $GITHUB_OUTPUT
-        touch release.txt
+        RELEASE_TAG="$(date +"%Y.%m.%d-%H%M-${VERSION}")-${{ matrix.device }}"
+        echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+
+        # Release 正文包含版本、所有发布文件、直接下载链接和逐文件 SHA256。
+        RELEASE_BODY="$GITHUB_WORKSPACE/release.txt"
+        RELEASE_BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+        {
+          echo "# OpenWrt ${VERSION} - ${{ matrix.device }}"
+          echo
+          echo "- 源码分支：`${REPO_BRANCH}`"
+          echo "- 构建时间：$(date '+%Y-%m-%d %H:%M:%S %Z')"
+          echo "- 设备：`${{ matrix.device }}`"
+          echo
+          echo "## 发布文件"
+          echo
+          while IFS= read -r -d '' FILE_NAME; do
+            FILE_NAME="${FILE_NAME#./}"
+            echo "- [`${FILE_NAME}`](${RELEASE_BASE_URL}/${FILE_NAME})"
+          done < <(cd "$FIRMWARE" && find . -maxdepth 1 -type f -printf '%f\0' | sort -z)
+          echo
+          echo "## SHA256"
+          echo
+          echo '```text'
+          (
+            cd "$FIRMWARE"
+            while IFS= read -r -d '' FILE_NAME; do
+              sha256sum -- "$FILE_NAME"
+            done < <(find . -maxdepth 1 -type f -printf '%f\0' | sort -z)
+          )
+          echo '```'
+        } > "$RELEASE_BODY"
+
+        test -s "$RELEASE_BODY"
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: ⬆️ 上传固件到 Artifacts
@@ -252,9 +286,11 @@ jobs:
       id: firmware
       if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
       run: |
-        cd ${{ env.FIRMWARE }}
-        # 查找固件文件（支持多种格式）
-        FIRMWARE_PATH=$(ls *-squashfs-sysupgrade.bin 2>/dev/null || ls *-sysupgrade.bin 2>/dev/null || ls *.bin 2>/dev/null | head -n 1)
+        cd "${{ env.FIRMWARE }}"
+        # 选择一个默认升级固件，并把其它 .bin 文件交给 Release 页面查看。
+        FIRMWARE_PATH=$(find . -maxdepth 1 -type f -name '*-squashfs-sysupgrade.bin' -printf '%f\n' | sort | head -n 1)
+        [ -n "$FIRMWARE_PATH" ] || FIRMWARE_PATH=$(find . -maxdepth 1 -type f -name '*-sysupgrade.bin' -printf '%f\n' | sort | head -n 1)
+        [ -n "$FIRMWARE_PATH" ] || FIRMWARE_PATH=$(find . -maxdepth 1 -type f -name '*.bin' -printf '%f\n' | sort | head -n 1)
         if [ -n "$FIRMWARE_PATH" ]; then
           echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> $GITHUB_OUTPUT
         fi
@@ -272,9 +308,20 @@ jobs:
         }
 
         generate_firmware_links() {
-          if [ "${{ steps.firmware.outputs.download_url }}" != "" ]; then
-            echo "<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
-            echo "<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
+          local release_url="https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.release_tag }}"
+          local download_base="https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}"
+          local firmware_count=0
+
+          if [ -d "${{ env.FIRMWARE }}" ]; then
+            while IFS= read -r FIRMWARE_FILE; do
+              [ -n "$FIRMWARE_FILE" ] || continue
+              firmware_count=$((firmware_count + 1))
+              echo "<li>📥 ${FIRMWARE_FILE}：<a href='${download_base}/${FIRMWARE_FILE}' target='_blank'>点击下载</a></li>"
+            done < <(find "${{ env.FIRMWARE }}" -maxdepth 1 -type f -name '*.bin' -printf '%f\n' | sort)
+          fi
+
+          if [ "$firmware_count" -gt 0 ]; then
+            echo "<li>📋 完整发布文件及校验和：<a href='${release_url}' target='_blank'>查看 Release</a></li>"
           else
             echo "<li>📥 升级固件：Release未发布</li>"
             echo "<li>📥 完整固件：Release未发布</li>"
