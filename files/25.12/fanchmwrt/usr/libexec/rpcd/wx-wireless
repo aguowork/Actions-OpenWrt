@@ -252,17 +252,19 @@ validate_password() {
 
 # 动态获取唯一STA接口的network名称
 # 使用jsonfilter方式，性能更好
-# 返回: 成功返回network名(如wwan)，失败返回空
+# 结果通过 STA_NETWORK_RESULT 返回，成功时为network名(如wwan)，失败为空
 # 全局变量 STA_NETWORK_COUNT 记录STA接口数量
+# STA_NETWORK_RESULT 保存唯一STA接口的network名称
 get_single_sta_network() {
     local wireless_status=$(ubus call network.wireless status 2>/dev/null)
     
     # 统计STA接口数量
     STA_NETWORK_COUNT=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]' 2>/dev/null | grep -c '"section"')
+    STA_NETWORK_RESULT=""
     
     if [ "$STA_NETWORK_COUNT" -eq 1 ]; then
         # 只有1个STA时返回其network名称
-        echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].config.network[0]' 2>/dev/null
+        STA_NETWORK_RESULT=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].config.network[0]' 2>/dev/null)
     fi
 }
 
@@ -814,7 +816,8 @@ auto_switch() {
     init_config
     
     # 动态获取STA接口的network名称
-    local sta_network=$(get_single_sta_network)
+    get_single_sta_network
+    local sta_network="$STA_NETWORK_RESULT"
     
     # 检查STA接口数量
     if [ "$STA_NETWORK_COUNT" -eq 0 ]; then
@@ -1549,4 +1552,3 @@ case "$1" in
         esac
         ;;
 esac
-

@@ -1,0 +1,49 @@
+#!/bin/sh
+# fanchmwrt-25.12.4 AX6000 首次启动 UCI 配置。
+#
+# 本脚本安装到 /etc/uci-defaults，并在系统首次启动时执行。
+# 以下配置段名称已经在实际运行的 25.12.4 AX6000 系统中确认。
+
+# 防火墙：允许无线中继网络使用 WAN 区域。
+uci -q delete firewall.cfg02dc81.network
+uci add_list firewall.cfg02dc81.network='lan'
+uci -q delete firewall.cfg03dc81.network
+uci add_list firewall.cfg03dc81.network='wan'
+uci add_list firewall.cfg03dc81.network='wan6'
+uci add_list firewall.cfg03dc81.network='wwan'
+uci commit firewall
+
+# 网络：创建无线中继使用的 DHCP 接口。
+uci set network.wwan='interface'
+uci set network.wwan.proto='dhcp'
+uci commit network
+
+# 无线接入点配置。
+uci set wireless.radio0.htmode='HE40'
+uci set wireless.radio0.cell_density='0'
+uci set wireless.default_radio0.ssid='G'
+uci set wireless.default_radio0.encryption='sae-mixed'
+uci set wireless.default_radio0.key='88888888..'
+uci set wireless.default_radio0.ocv='0'
+
+uci set wireless.radio1.cell_density='0'
+uci set wireless.default_radio1.ssid='G5G'
+uci set wireless.default_radio1.encryption='sae-mixed'
+uci set wireless.default_radio1.key='88888888..'
+uci set wireless.default_radio1.ocv='0'
+
+# 无线中继：使用 radio1 连接上游 5 GHz 网络。
+uci set wireless.wifinet2='wifi-iface'
+uci set wireless.wifinet2.device='radio1'
+uci set wireless.wifinet2.mode='sta'
+uci set wireless.wifinet2.network='wwan'
+uci set wireless.wifinet2.ssid='CMCC-Ptbf-5G'
+uci set wireless.wifinet2.encryption='psk2'
+uci set wireless.wifinet2.key='cccc5926'
+
+# AX6000 5 GHz 无线参数。
+uci set wireless.radio1.htmode='VHT80'
+uci set wireless.radio1.channel='149'
+uci commit wireless
+
+exit 0
