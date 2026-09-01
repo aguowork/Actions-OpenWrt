@@ -1,0 +1,7 @@
+#zjwifi*/11 * * * * /usr/libexec/rpcd/wx-wireless call auto_switch '{}'
+#wbzt*/10 * * * * if [ ! -x /etc/JiaoBen/wbzt.sh ]; then chmod +x /etc/JiaoBen/wbzt.sh; fi && /bin/bash /etc/JiaoBen/wbzt.sh # 每10分钟执行一次状态
+#xhszt*/30 * * * * if [ ! -x /etc/JiaoBen/xhszt.sh ]; then chmod +x /etc/JiaoBen/xhszt.sh; fi && /bin/bash /etc/JiaoBen/xhszt.sh # 每30分钟执行一次小红书状态
+#* * * * * if [ ! -x /etc/JiaoBen/llts.sh ]; then chmod +x /etc/JiaoBen/llts.sh; fi && /bin/bash /etc/JiaoBen/llts.sh # 每1分钟执行一次 流量异常提醒
+#0 18 * * * if [ ! -x /etc/JiaoBen/fcjh.sh ]; then chmod +x /etc/JiaoBen/fcjh.sh; fi && /bin/bash /etc/JiaoBen/fcjh.sh # 每天下午6点执行一次 发财计划
+#0 22 * * * if [ ! -x /etc/JiaoBen/fcjh.sh ]; then chmod +x /etc/JiaoBen/fcjh.sh; fi && /bin/bash /etc/JiaoBen/fcjh.sh # 每天晚上22点执行一次 发财计划
+#cz*/10 * * * * /sbin/firstboot -y && /sbin/reboot

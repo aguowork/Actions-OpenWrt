@@ -1,0 +1,7 @@
+# 微博状态监控配置
+# 脚本会自动获取并缓存匿名访客 Cookie，不需要填写微博登录 Cookie。
+
+config wbzt 'main'
+	option enabled '0'
+	# Base64 仅用于避免仓库直接展示 UID，并不属于加密。
+	option uid_b64 'MzE5MjM2MjUyMg=='
