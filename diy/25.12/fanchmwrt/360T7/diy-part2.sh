@@ -27,9 +27,14 @@ rm -rf package/feeds/wechatpush/luci-app-wechatpush package/luci-app-wechatpush
 git clone --depth=1 https://github.com/aguowork/luci-app-wechatpush.git package/luci-app-wechatpush
 
 # 3. 添加 luci-app-wechatpush 的流量监控依赖 wrtbwmon
+# 直接用上游 brvphoenix/wrtbwmon：活跃维护，Makefile 版本号 1.2.1 与代码的实际能力一致。
+# 不要换回 gitbruc/openwrt-wrtbwmon —— 那份代码与上游逐字节相同，但版本号仍写着 1.0.1，
+# 而 luci-app-wechatpush 靠版本号选调用方式（>= 1.2.0 用 wrtbwmon -f，<= 1.0.0 用 wrtbwmon update），
+# 1.0.1 卡在两个区间中间会导致两条分支都不执行，usage.db 永远不生成，
+# 最终 luci-app-wechatpush 的“设备异常流量”告警读到的流量恒为 0（已踩过的坑）。
 echo "正在添加 wrtbwmon..."
 rm -rf package/wrtbwmon package/wrtbwmon-source
-git clone --depth=1 https://github.com/gitbruc/openwrt-wrtbwmon.git package/wrtbwmon-source
+git clone --depth=1 https://github.com/brvphoenix/wrtbwmon.git package/wrtbwmon-source
 mv package/wrtbwmon-source/wrtbwmon package/wrtbwmon
 rm -rf package/wrtbwmon-source
 

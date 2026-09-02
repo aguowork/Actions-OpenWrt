@@ -225,7 +225,7 @@ fetch_mobile_data() {
     local curl_status
     local profile_path
 
-    final_url=$(curl -fsSL --compressed \
+    final_url=$(curl -fsSL \
         --connect-timeout 10 --max-time 30 \
         --retry 2 --retry-delay 2 --retry-connrefused --retry-max-time 60 \
         -A "${ANDROID_USER_AGENT}" \
@@ -269,7 +269,7 @@ fetch_desktop_data() {
     local final_url
     local curl_status
 
-    final_url=$(curl -fsSL --compressed \
+    final_url=$(curl -fsSL \
         --connect-timeout 10 --max-time 30 \
         --retry 2 --retry-delay 2 --retry-connrefused --retry-max-time 60 \
         -A "${DESKTOP_USER_AGENT}" \
