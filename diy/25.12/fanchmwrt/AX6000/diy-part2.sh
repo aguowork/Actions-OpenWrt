@@ -27,6 +27,13 @@ echo "正在添加 luci-app-wechatpush..."
 rm -rf package/feeds/wechatpush/luci-app-wechatpush package/luci-app-wechatpush
 git clone --depth=1 https://github.com/aguowork/luci-app-wechatpush.git package/luci-app-wechatpush
 
+# 3. 添加 luci-app-wechatpush 的流量监控依赖 wrtbwmon
+echo "正在添加 wrtbwmon..."
+rm -rf package/wrtbwmon package/wrtbwmon-source
+git clone --depth=1 https://github.com/gitbruc/openwrt-wrtbwmon.git package/wrtbwmon-source
+mv package/wrtbwmon-source/wrtbwmon package/wrtbwmon
+rm -rf package/wrtbwmon-source
+
 echo "第三方包处理完成！"
 
 # ============================================
