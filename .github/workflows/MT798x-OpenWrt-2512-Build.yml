@@ -399,10 +399,19 @@ jobs:
         keep_minimum_runs: 2
 
     - name: 🗑️ 清理旧的 Release 发布
-      uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
-      with:
-        keep_latest: 3
-        delete_tags: true
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+
+        mapfile -t older_releases < <(
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq 'add | map(select(.draft == false)) | sort_by(.published_at) | reverse | .[3:][] | [.tag_name] | @tsv'
+        )
+
+        for release in "${older_releases[@]}"; do
+          [ -n "$release" ] || continue
+          echo "删除旧 Release：$release"
+          gh release delete "$release" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+        done
