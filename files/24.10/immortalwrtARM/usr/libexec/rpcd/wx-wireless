@@ -28,6 +28,31 @@ if [ ! -f "$SETTINGS_FILE" ]; then
 fi
 . "$SETTINGS_FILE"
 
+# 检查配置分区剩余空间
+# 实测(ubifs overlay 写满): uci commit 仍然返回0、也不打印任何错误,
+# 但 /etc/config/xxx 会被写成0字节, 配置直接丢失。
+# 也就是说 if ! uci commit 只能抓到解析错误/找不到条目一类问题,
+# 抓不到空间不足, 因此写类操作必须在动手之前先自查空间。
+CONFIG_MIN_FREE_KB=64
+check_storage_space() {
+    local free
+    free=$(df -k /etc 2>/dev/null | awk 'NF>=5 {v=$(NF-2)} END{print v}' 2>/dev/null)
+    case "$free" in
+        ''|*[!0-9]*) return 0 ;;   # 取不到剩余空间就不拦截, 避免误伤
+    esac
+    [ "$free" -ge "$CONFIG_MIN_FREE_KB" ]
+}
+
+# 原子写入文件, 内容从 stdin 读
+# 直接用 > 覆盖时, 一旦写到中途空间耗尽, 原文件已经被截断、内容全丢;
+# 先写 .tmp 再 mv 则失败时返回非0, 且原文件保持完好
+atomic_write() {
+    local target="$1"
+    cat > "$target.tmp" 2>/dev/null && mv "$target.tmp" "$target" 2>/dev/null && return 0
+    rm -f "$target.tmp"
+    return 1
+}
+
 
 # 日志记录函数（带自动轮转）
 log_message() {
@@ -39,11 +64,11 @@ log_message() {
         if [ "$log_size" -gt "$MAX_LOG_SIZE" ]; then
             local tmp_file=$(mktemp)
             tail -n 50 "$LOG_FILE" > "$tmp_file"
-            mv "$tmp_file" "$LOG_FILE"
+            mv "$tmp_file" "$LOG_FILE" 2>/dev/null
         fi
     fi
     
-    echo "$log_entry" >> "$LOG_FILE"
+    echo "$log_entry" >> "$LOG_FILE" 2>/dev/null
 }
 
 # 确保配置文件存在
@@ -52,7 +77,7 @@ init_config() {
         mkdir -p "$CONFIG_DIR"
     fi
     if [ ! -f "$CONFIG_FILE" ]; then
-        echo '{"wifi":[],"autowifiranking":[{"CQ_TIMES":0}]}' > "$CONFIG_FILE"
+        echo '{"wifi":[],"autowifiranking":[{"CQ_TIMES":0}]}' | atomic_write "$CONFIG_FILE"
     fi
 }
 
@@ -84,7 +109,7 @@ json_get_cq_times() {
 # 设置 CQ_TIMES 值
 json_set_cq_times() {
     local value="$1"
-    sed -i "s/\"CQ_TIMES\":[0-9]*/\"CQ_TIMES\":$value/" "$CONFIG_FILE"
+    sed "s/\"CQ_TIMES\":[0-9]*/\"CQ_TIMES\":$value/" "$CONFIG_FILE" | atomic_write "$CONFIG_FILE"
 }
 
 # JSON 字符串转义（处理 \ 和 "，防止 JSON 损坏）
@@ -128,7 +153,7 @@ json_update_wifi_timestamp() {
     done
     new_wifi="$new_wifi]"
     
-    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" | atomic_write "$CONFIG_FILE"
 }
 
 # 保存或更新 wifi 热点
@@ -180,7 +205,7 @@ json_save_wifi() {
     new_wifi="$new_wifi]"
     
     # 重写配置文件
-    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" | atomic_write "$CONFIG_FILE"
 }
 
 # 删除 wifi 热点
@@ -209,7 +234,7 @@ json_delete_wifi() {
     done
     new_wifi="$new_wifi]"
     
-    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" | atomic_write "$CONFIG_FILE"
 }
 
 # 重写 wifi 数组（用于排序）
@@ -217,7 +242,7 @@ json_delete_wifi() {
 json_rewrite_wifi() {
     local new_wifi="$1"
     local cq_times=$(json_get_cq_times)
-    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" > "$CONFIG_FILE"
+    echo "{\"wifi\":$new_wifi,\"autowifiranking\":[{\"CQ_TIMES\":$cq_times}]}" | atomic_write "$CONFIG_FILE"
 }
 
 # 检查网络连通性（遍历多个检测目标，每个发3包，任意1个目标通即视为连通）
@@ -252,17 +277,19 @@ validate_password() {
 
 # 动态获取唯一STA接口的network名称
 # 使用jsonfilter方式，性能更好
-# 返回: 成功返回network名(如wwan)，失败返回空
+# 结果通过 STA_NETWORK_RESULT 返回（不能用 $(...) 取，否则子shell里的计数回不到调用方）
 # 全局变量 STA_NETWORK_COUNT 记录STA接口数量
+# STA_NETWORK_RESULT 保存唯一STA接口的network名称
 get_single_sta_network() {
     local wireless_status=$(ubus call network.wireless status 2>/dev/null)
-    
+
     # 统计STA接口数量
     STA_NETWORK_COUNT=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]' 2>/dev/null | grep -c '"section"')
-    
+    STA_NETWORK_RESULT=""
+
     if [ "$STA_NETWORK_COUNT" -eq 1 ]; then
         # 只有1个STA时返回其network名称
-        echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].config.network[0]' 2>/dev/null
+        STA_NETWORK_RESULT=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].config.network[0]' 2>/dev/null)
     fi
 }
 
@@ -538,7 +565,15 @@ connect() {
     json_get_var encryption encryption
     json_get_var key key
     json_get_var band band
-    
+
+    if [ -z "$ssid" ]; then
+        json_init
+        json_add_string "status" "error"
+        json_add_string "message" "请输入WiFi名称"
+        json_dump
+        return
+    fi
+
     # 校验密码
     if [ "$encryption" != "none" ] && [ "$encryption" != "owe" ]; then
         if ! validate_password "$key"; then
@@ -549,7 +584,7 @@ connect() {
             return
         fi
     fi
-    
+
     # 标准化band格式
     case "$band" in
         2g|2G|2.4g|2.4G) band="2g" ;;
@@ -675,15 +710,20 @@ save_network() {
 delete_networks() {
     init_config
     json_load "$1"
-    
-    local names
-    json_get_values names names
-    
-    for name in $names; do
-        json_delete_wifi "$name"
-        log_message "删除热点: $name"
-    done
-    
+
+    # 按下标遍历数组，避免 for name in $names 把含空格的SSID拆开
+    local keys key name
+    if json_select names >/dev/null 2>&1; then
+        json_get_keys keys
+        for key in $keys; do
+            json_get_var name "$key"
+            [ -n "$name" ] || continue
+            json_delete_wifi "$name"
+            log_message "删除热点: $name"
+        done
+        json_select ..
+    fi
+
     json_init
     json_add_string "status" "success"
     json_add_string "message" "热点已删除"
@@ -814,7 +854,8 @@ auto_switch() {
     init_config
     
     # 动态获取STA接口的network名称
-    local sta_network=$(get_single_sta_network)
+    get_single_sta_network
+    local sta_network="$STA_NETWORK_RESULT"
     
     # 检查STA接口数量
     if [ "$STA_NETWORK_COUNT" -eq 0 ]; then
@@ -903,9 +944,8 @@ auto_switch() {
         
         # 检查是否在冷却时间内（防止短时间重复连接）
         if [ -n "$last_updated" ] && [ "$last_updated" != "null" ]; then
-            # 将 "2025-06-10 12:30:45" 转换为 busybox 兼容格式 "2025-06-10T12:30:45"
-            local last_updated_iso=$(echo "$last_updated" | sed 's/ /T/')
-            local last_ts=$(date -d "$last_updated_iso" +%s 2>/dev/null)
+            # BusyBox date 不接受 ISO 8601 的 T 分隔符，直接使用保存的格式
+            local last_ts=$(date -d "$last_updated" +%s 2>/dev/null)
             if [ -n "$last_ts" ]; then
                 local now_ts=$(date +%s)
                 local diff=$((now_ts - last_ts))
@@ -1185,14 +1225,16 @@ scan_wifi() {
         # 提取 BSSID (Cell XX - Address: XX:XX:XX:XX:XX:XX)
         for (i=1; i<=NF; i++) if ($i ~ /^[0-9A-Fa-f]{2}:/) bssid = $i
         ssid = ""; channel = 0; signal = 0; quality = 0
-        enc_enabled = "false"; wpa_vers = ""
+        enc_enabled = "false"; wpa_vers = ""; auth = ""
     }
     /ESSID:/ {
         if ($0 ~ /unknown/) ssid = ""
         else {
-            sub(/.*ESSID: "/, ""); sub(/".*/, "")
+            # 只去掉行尾那个引号，SSID 内部含引号时不会被截断
+            sub(/.*ESSID: "/, ""); sub(/"$/, "")
             ssid = $0
-            gsub(/\\/, "\\\\", ssid); gsub(/"/, "\\\"", ssid)
+            # BusyBox awk 的替换串里 \\ 只产出一个反斜杠，要输出 JSON 的 \\ 需写 4 个
+            gsub(/\\/, "\\\\\\\\", ssid); gsub(/"/, "\\\\\"", ssid)
         }
     }
     /Band:.*Channel:/ {
@@ -1207,13 +1249,33 @@ scan_wifi() {
             if ($i == "Quality:") { split($(i+1), q, "/"); quality = q[1] }
         }
     }
+    # 加密解析：同时兼容两种 iwinfo 输出格式
+    #   24.10 及以前是 C 版 iwinfo，会明确打印版本号：
+    #     none / WPA2 PSK (CCMP) / mixed WPA/WPA2 PSK (TKIP, CCMP) / WPA3 SAE (CCMP)
+    #   25.12 起 iwinfo 改为 ucode 实现，只打印 key_mgmt，没有版本号且 NONE 是大写：
+    #     NONE / WPA PSK (CCMP) / WPA PSK / SAE (CCMP) / SAE (CCMP)
+    # 因此统一转小写后按 key_mgmt 判断，只有旧版明确的 "wpa/wpa2" 才算 WPA1+WPA2，
+    # 其余一律按 WPA2 上报（真正只支持 WPA1 的热点已基本绝迹，按 WPA1 上报反而连不上）
     /Encryption:/ {
-        if ($0 ~ /none/) { enc_enabled = "false"; wpa_vers = "" }
-        else {
+        enc = tolower(substr($0, index($0, "Encryption:") + 11))
+        sub(/^[[:space:]]+/, "", enc)
+        wpa_vers = ""; auth = ""
+        if (enc == "" || index(enc, "none") == 1) {
+            enc_enabled = "false"
+        } else {
             enc_enabled = "true"
-            if ($0 ~ /mixed/ || ($0 ~ /WPA2/ && $0 ~ /WPA[^2]/)) wpa_vers = "[1,2]"
-            else if ($0 ~ /WPA2/) wpa_vers = "[2]"
-            else if ($0 ~ /WPA/) wpa_vers = "[1]"
+            has_sae = (index(enc, "sae") > 0)
+            has_psk = (index(enc, "psk") > 0)
+            # 前端见到 authentication 含 sae 就会选 sae，
+            # 所以只有纯 WPA3(SAE) 才上报 sae；WPA2/WPA3 混合上报 psk，让前端选兼容性更好的 psk2
+            if (has_sae && !has_psk)           auth = "[\"sae\"]"
+            else if (has_psk)                  auth = "[\"psk\"]"
+            else if (index(enc, "owe") > 0)    auth = "[\"owe\"]"
+            else if (index(enc, "802.1x") > 0) auth = "[\"eap\"]"
+            else if (index(enc, "eap") > 0)    auth = "[\"eap\"]"
+            else if (index(enc, "wep") > 0)    auth = "[\"wep\"]"
+            if (index(enc, "wpa/wpa2") > 0)                       wpa_vers = "[1,2]"
+            else if (has_psk || has_sae || index(enc, "wpa") > 0)  wpa_vers = "[2]"
         }
     }
     function print_entry() {
@@ -1227,7 +1289,10 @@ scan_wifi() {
         printf "\"quality\":%d,", quality
         printf "\"quality_max\":100,"
         printf "\"encryption\":{\"enabled\":%s", enc_enabled
-        if (enc_enabled == "true" && wpa_vers != "") printf ",\"wpa\":%s,\"authentication\":[\"psk\"]", wpa_vers
+        if (enc_enabled == "true") {
+            if (wpa_vers != "") printf ",\"wpa\":%s", wpa_vers
+            if (auth != "") printf ",\"authentication\":%s", auth
+        }
         printf "}}"
     }
     END { if (bssid != "") print_entry(); print "]}" }
@@ -1352,7 +1417,7 @@ HEADER
         printf "RETRY_WIFI_INTERVAL=%s\n" "$safe_retry_interval"
         printf "RESTART_THRESHOLD=%s\n" "$safe_restart_threshold"
         echo ""
-    } > "$SETTINGS_FILE"
+    } | atomic_write "$SETTINGS_FILE"
     
     # 重新加载配置
     . "$SETTINGS_FILE"
@@ -1525,6 +1590,20 @@ case "$1" in
         echo '{"get_status":{},"get_wireless_settings":{},"save_wireless_settings":{"settings":"object"},"connect":{"ssid":"string","encryption":"string","key":"string","band":"string"},"get_known_networks":{},"save_network":{"name":"string","encryption":"string","password":"string","band":"string"},"delete_networks":{"names":"array"},"save_order":{"wifi":"array"},"auto_switch":{},"get_log":{"lines":"number"},"clear_log":{},"get_retry_status":{},"reset_retry_count":{},"scan_wifi":{"band":"string"},"get_cached_scan":{"band":"string"},"get_settings":{},"save_settings":{"settings":"object"},"test_push":{},"enable_relay":{"ssid":"string","key":"string","encryption":"string","band":"string"},"disable_relay":{}}'
         ;;
     call)
+        # 写类方法先自查存储空间: 空间不足时 uci commit 和 > 重定向都会
+        # 静默把配置文件写坏, 所以在动手之前就拦住
+        # (clear_log 是释放空间的操作不能拦; 纯读方法不受影响)
+        case "$2" in
+            save_wireless_settings|connect|save_network|delete_networks|save_order|save_settings|reset_retry_count|enable_relay|disable_relay|auto_switch)
+                if ! check_storage_space; then
+                    json_init
+                    json_add_string "status" "error"
+                    json_add_string "message" "存储空间不足，无法保存配置"
+                    json_dump
+                    exit 0
+                fi
+                ;;
+        esac
         case "$2" in
             get_status) get_status ;;
             get_wireless_settings) get_wireless_settings ;;
