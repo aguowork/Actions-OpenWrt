@@ -83,9 +83,11 @@ jobs:
       run: |
         CONFIG_BASE_PATH="./config/24.10/immortalwrtARM"
         DIY_BASE_PATH="./diy/24.10/immortalwrtARM"
+        FILES_BASE_PATH="./files/24.10/immortalwrtARM"
         echo "CONFIG_FILE=${CONFIG_BASE_PATH}/${{ matrix.device }}/${{ matrix.device }}-mtwifi-cfg.config" >> $GITHUB_ENV
         echo "DIY_P1_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part1.sh" >> $GITHUB_ENV
         echo "DIY_P2_SH=${DIY_BASE_PATH}/${{ matrix.device }}/diy-part2.sh" >> $GITHUB_ENV
+        echo "FILES_BASE_PATH=${FILES_BASE_PATH}" >> $GITHUB_ENV
 
     - name: 🔌 加载自定义 feeds (diy-part1.sh)
       run: |
@@ -122,7 +124,13 @@ jobs:
           exit 1
         fi
 
-        [ -e files/24.10 ] && mkdir -p openwrt/files && cp -rf files/24.10/* openwrt/files/
+        if [ -d "${FILES_BASE_PATH}" ]; then
+          mkdir -p openwrt/files
+          cp -rf "${FILES_BASE_PATH}"/. openwrt/files/
+        else
+          echo "::error::找不到自定义文件目录 ${FILES_BASE_PATH}"
+          exit 1
+        fi
 
         # 私有固件：分别初始化监控脚本与网页项目的独立 WxPusher 配置。
         WXPUSHER_CONFIG_FILES=(
