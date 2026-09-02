@@ -16,10 +16,11 @@ SETTINGS_FILE="$CONFIG_DIR/wx_settings.conf"
 TOKEN_EXPIRY=3600                     # 登录Token有效期 (秒)
 MAX_FAIL=10                           # 密码错误锁定次数
 LOCK_TIME=3600                        # 锁定时长 (秒)
-SHOW_WXPUSHER=0                       # 显示消息推送配置 (1=显示, 0=隐藏)
+SHOW_WXPUSHER=1                       # 显示消息推送配置 (1=显示, 0=隐藏)
 MAX_LOG_SIZE=102400                   # 日志最大大小 (Bytes)
 CHECK_WAIT_TIME=3                     # 检测循环等待间隔 (秒)
 REBOOT_DELAY_TIME=3                   # 触发重启前的缓冲时间 (秒)
+RELOAD_WAIT_TIME=3                    # 无线重载后等待网络层跟进的时间 (秒)
 VERIFY_RETRY_COUNT=4                  # STA关联状态验证次数 (每次间隔 CHECK_WAIT_TIME 秒)
 
 # 加载用户配置文件
@@ -264,15 +265,49 @@ json_error_response() {
     json_dump
 }
 
+# 重载无线 (fail-open)
+# 实测 24.10 (ImmortalWrt / mtwifi-cfg) 与 25.12 (mac80211/mt76) 的 /sbin/wifi:
+#   wifi reload = "ubus call network reload" + wifi_reload_legacy,
+#   而 wifi_reload_legacy -> _wifi_updown 对 netifd 托管的驱动是空操作
+#   (找不到 enable_<iftype> 函数, 且 /lib/netifd/wireless/<iftype>.sh 存在,
+#    if/elif 两条都不成立; 24.10 上 /lib/wifi/mtwifi.sh 只定义了 detect_mtwifi)。
+# 所以 wifi reload 的返回值恒为 0 —— 检查它是死代码, 这里只记日志。
+# 真正的失败只能事后由 wait_for_sta_connection 观察 STA 关联状态来判定。
+# 输出必须丢掉: _wifi_updown 在设备 disabled 时会往 stdout 打印, 而
+# www/cgi-bin/wx-auth.sh 把本脚本的 stdout(含 stderr) 当成 JSON 响应回给前端。
+reload_wireless() {
+    wifi reload >/dev/null 2>&1 || log_message "警告: wifi reload 返回非0 (已忽略)"
+    return 0
+}
+
+# 重载网络+防火墙 (已含无线, fail-open)
+# /etc/init.d/network reload 的 reload_service() = init_switch +
+#   "ubus call network reload" + "/sbin/wifi reload_legacy",
+# 是 wifi reload 的超集 —— 旧 24.10 里 "wifi reload; sleep; network reload"
+# 等于把同一次无线重载做了两遍, 这里去掉重复的那一遍。
+# mtwifi.sh 走标准 netifd 无线接口(wireless_add_vif/wireless_set_up),
+# STA 口出现后 netifd 会自动把 wwan 挂上去, 不需要再单独踢一次无线。
+# 末尾留 RELOAD_WAIT_TIME 秒让无线口先起来, 之后 wait_for_sta_connection 再开始轮询。
+reload_network_full() {
+    /etc/init.d/network reload >/dev/null 2>&1 || log_message "警告: network reload 返回非0 (已忽略)"
+    /etc/init.d/firewall reload >/dev/null 2>&1 || log_message "警告: firewall reload 返回非0 (已忽略)"
+    sleep "$RELOAD_WAIT_TIME"
+    return 0
+}
+
 # 等待STA关联到指定热点
 # 参数: $1=期望SSID $2=network名称
-# 返回: 0=已关联且已取得IP  2=已关联但尚未取得IP  1=未关联
+# 返回: 0=已关联且已取得IP  2=已关联但尚未取得IP  1=未关联  3=无法判定
+# fail-open: 只有确实读到了无线状态才敢断言"没连上"(返回1)。
+# 24.10 的 mtwifi-cfg 下 STA 接口名或 iwinfo 输出可能读不到, 那种情况返回3,
+# 调用方按"结果未知"处理(走中性提示), 不会误报成失败。
 wait_for_sta_connection() {
     local expected_ssid="$1"
     local network="$2"
     local retry=0
     local associated=0
-    local ifname current_ssid up
+    local readable=0
+    local ifname info current_ssid up
 
     while [ "$retry" -lt "$VERIFY_RETRY_COUNT" ]; do
         [ "$retry" -gt 0 ] && sleep "$CHECK_WAIT_TIME"
@@ -282,7 +317,11 @@ wait_for_sta_connection() {
         ifname=$(ubus call network.wireless status 2>/dev/null | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].ifname' 2>/dev/null | head -1)
         [ -z "$ifname" ] && continue
 
-        current_ssid=$(iwinfo "$ifname" info 2>/dev/null | awk -F'"' '/ESSID/{print $2}')
+        # iwinfo 有输出才说明这块驱动的状态是可读的
+        info=$(iwinfo "$ifname" info 2>/dev/null)
+        [ -n "$info" ] && readable=1
+
+        current_ssid=$(echo "$info" | awk -F'"' '/ESSID/{print $2}')
         [ "$current_ssid" = "$expected_ssid" ] || continue
         associated=1
 
@@ -292,7 +331,8 @@ wait_for_sta_connection() {
     done
 
     [ "$associated" = "1" ] && return 2
-    return 1
+    [ "$readable" = "1" ] && return 1
+    return 3
 }
 
 # 获取无线 STA 配置段名称（兼容mode=sta和mode='sta'两种格式）
@@ -591,10 +631,7 @@ save_wireless_settings() {
         json_error_response "无线配置提交失败"
         return
     fi
-    if ! wifi reload; then
-        json_error_response "无线服务重载失败"
-        return
-    fi
+    reload_wireless
 
     json_init
     json_add_string "status" "success"
@@ -697,16 +734,8 @@ connect() {
             return
         fi
         
-        # 5. 重载网络（/etc/init.d/network reload 内部就是 ubus call network reload，
-        #    无线配置会一并生效，不需要再单独 wifi reload）
-        if ! /etc/init.d/network reload; then
-            json_error_response "网络服务重载失败"
-            return
-        fi
-        if ! /etc/init.d/firewall reload; then
-            json_error_response "防火墙服务重载失败"
-            return
-        fi
+        # 5. 重载无线+网络+防火墙 (fail-open, 见 reload_network_full 注释)
+        reload_network_full
         wait_for_sta_connection "$ssid" "wwan"
         wait_rc=$?
         if [ "$wait_rc" = "1" ]; then
@@ -735,10 +764,7 @@ connect() {
             json_error_response "无线配置提交失败"
             return
         fi
-        if ! wifi reload; then
-            json_error_response "无线服务重载失败"
-            return
-        fi
+        reload_wireless
         wait_for_sta_connection "$ssid" "$sta_network"
         wait_rc=$?
         if [ "$wait_rc" = "1" ]; then
@@ -1087,10 +1113,7 @@ auto_switch() {
             json_error_response "自动切换配置提交失败"
             return
         fi
-        if ! wifi reload; then
-            json_error_response "自动切换无线服务重载失败"
-            return
-        fi
+        reload_wireless
         
         # 核心逻辑修改：统计 SWITCH_COUNT (wifi 重载次数)
         # 只要执行了 wifi reload，无论后续连接成功与否，都要累加计数
@@ -1623,16 +1646,8 @@ enable_relay() {
         return
     fi
     
-    # 5. 重载网络（/etc/init.d/network reload 内部就是 ubus call network reload，
-    #    无线配置会一并生效，不需要再单独 wifi reload）
-    if ! /etc/init.d/network reload; then
-        json_error_response "网络服务重载失败"
-        return
-    fi
-    if ! /etc/init.d/firewall reload; then
-        json_error_response "防火墙服务重载失败"
-        return
-    fi
+    # 5. 重载无线+网络+防火墙 (fail-open, 见 reload_network_full 注释)
+    reload_network_full
     wait_for_sta_connection "$ssid" "wwan"
     wait_rc=$?
     if [ "$wait_rc" = "1" ]; then
@@ -1688,16 +1703,8 @@ disable_relay() {
         return
     fi
     
-    # 5. 重载网络（/etc/init.d/network reload 内部就是 ubus call network reload，
-    #    无线配置会一并生效，不需要再单独 wifi reload）
-    if ! /etc/init.d/network reload; then
-        json_error_response "网络服务重载失败"
-        return
-    fi
-    if ! /etc/init.d/firewall reload; then
-        json_error_response "防火墙服务重载失败"
-        return
-    fi
+    # 5. 重载无线+网络+防火墙 (fail-open, 见 reload_network_full 注释)
+    reload_network_full
 
     log_message "中继模式已关闭"
     
@@ -1744,6 +1751,12 @@ case "$1" in
             test_push) test_push ;;
             enable_relay) enable_relay "$3" ;;
             disable_relay) disable_relay ;;
+            *)
+                # 兜底: 未知方法也必须回一个合法 JSON。否则 www/cgi-bin/wx-auth.sh
+                # 会把空响应直接回给前端, 前端只能报"服务器返回空响应", 看不出是方法名写错了。
+                # 方法名来自 URL 查询串, 回显前过滤成安全字符集并截断。
+                json_error_response "未知方法: $(echo "$2" | tr -cd 'a-zA-Z0-9_' | cut -c1-32)"
+                ;;
         esac
         ;;
 esac

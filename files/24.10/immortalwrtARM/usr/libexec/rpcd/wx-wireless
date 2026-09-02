@@ -16,10 +16,12 @@ SETTINGS_FILE="$CONFIG_DIR/wx_settings.conf"
 TOKEN_EXPIRY=3600                     # 登录Token有效期 (秒)
 MAX_FAIL=10                           # 密码错误锁定次数
 LOCK_TIME=3600                        # 锁定时长 (秒)
-SHOW_WXPUSHER=0                       # 显示消息推送配置 (1=显示, 0=隐藏)
+SHOW_WXPUSHER=1                       # 显示消息推送配置 (1=显示, 0=隐藏)
 MAX_LOG_SIZE=102400                   # 日志最大大小 (Bytes)
 CHECK_WAIT_TIME=3                     # 检测循环等待间隔 (秒)
 REBOOT_DELAY_TIME=3                   # 触发重启前的缓冲时间 (秒)
+RELOAD_WAIT_TIME=3                    # 无线重载后等待网络层跟进的时间 (秒)
+VERIFY_RETRY_COUNT=4                  # STA关联状态验证次数 (每次间隔 CHECK_WAIT_TIME 秒)
 
 # 加载用户配置文件
 if [ ! -f "$SETTINGS_FILE" ]; then
@@ -255,6 +257,84 @@ check_connectivity() {
     return 1
 }
 
+# 返回统一格式的错误信息
+json_error_response() {
+    json_init
+    json_add_string "status" "error"
+    json_add_string "message" "$1"
+    json_dump
+}
+
+# 重载无线 (fail-open)
+# 实测 24.10 (ImmortalWrt / mtwifi-cfg) 与 25.12 (mac80211/mt76) 的 /sbin/wifi:
+#   wifi reload = "ubus call network reload" + wifi_reload_legacy,
+#   而 wifi_reload_legacy -> _wifi_updown 对 netifd 托管的驱动是空操作
+#   (找不到 enable_<iftype> 函数, 且 /lib/netifd/wireless/<iftype>.sh 存在,
+#    if/elif 两条都不成立; 24.10 上 /lib/wifi/mtwifi.sh 只定义了 detect_mtwifi)。
+# 所以 wifi reload 的返回值恒为 0 —— 检查它是死代码, 这里只记日志。
+# 真正的失败只能事后由 wait_for_sta_connection 观察 STA 关联状态来判定。
+# 输出必须丢掉: _wifi_updown 在设备 disabled 时会往 stdout 打印, 而
+# www/cgi-bin/wx-auth.sh 把本脚本的 stdout(含 stderr) 当成 JSON 响应回给前端。
+reload_wireless() {
+    wifi reload >/dev/null 2>&1 || log_message "警告: wifi reload 返回非0 (已忽略)"
+    return 0
+}
+
+# 重载网络+防火墙 (已含无线, fail-open)
+# /etc/init.d/network reload 的 reload_service() = init_switch +
+#   "ubus call network reload" + "/sbin/wifi reload_legacy",
+# 是 wifi reload 的超集 —— 旧 24.10 里 "wifi reload; sleep; network reload"
+# 等于把同一次无线重载做了两遍, 这里去掉重复的那一遍。
+# mtwifi.sh 走标准 netifd 无线接口(wireless_add_vif/wireless_set_up),
+# STA 口出现后 netifd 会自动把 wwan 挂上去, 不需要再单独踢一次无线。
+# 末尾留 RELOAD_WAIT_TIME 秒让无线口先起来, 之后 wait_for_sta_connection 再开始轮询。
+reload_network_full() {
+    /etc/init.d/network reload >/dev/null 2>&1 || log_message "警告: network reload 返回非0 (已忽略)"
+    /etc/init.d/firewall reload >/dev/null 2>&1 || log_message "警告: firewall reload 返回非0 (已忽略)"
+    sleep "$RELOAD_WAIT_TIME"
+    return 0
+}
+
+# 等待STA关联到指定热点
+# 参数: $1=期望SSID $2=network名称
+# 返回: 0=已关联且已取得IP  2=已关联但尚未取得IP  1=未关联  3=无法判定
+# fail-open: 只有确实读到了无线状态才敢断言"没连上"(返回1)。
+# 24.10 的 mtwifi-cfg 下 STA 接口名或 iwinfo 输出可能读不到, 那种情况返回3,
+# 调用方按"结果未知"处理(走中性提示), 不会误报成失败。
+wait_for_sta_connection() {
+    local expected_ssid="$1"
+    local network="$2"
+    local retry=0
+    local associated=0
+    local readable=0
+    local ifname info current_ssid up
+
+    while [ "$retry" -lt "$VERIFY_RETRY_COUNT" ]; do
+        [ "$retry" -gt 0 ] && sleep "$CHECK_WAIT_TIME"
+        retry=$((retry + 1))
+
+        # STA接口名从 wireless status 取，三层还没起来时也能拿到
+        ifname=$(ubus call network.wireless status 2>/dev/null | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].ifname' 2>/dev/null | head -1)
+        [ -z "$ifname" ] && continue
+
+        # iwinfo 有输出才说明这块驱动的状态是可读的
+        info=$(iwinfo "$ifname" info 2>/dev/null)
+        [ -n "$info" ] && readable=1
+
+        current_ssid=$(echo "$info" | awk -F'"' '/ESSID/{print $2}')
+        [ "$current_ssid" = "$expected_ssid" ] || continue
+        associated=1
+
+        # 已关联，再确认三层是否拿到地址
+        up=$(ubus call network.interface."$network" status 2>/dev/null | jsonfilter -e '@.up' 2>/dev/null)
+        [ "$up" = "true" ] && return 0
+    done
+
+    [ "$associated" = "1" ] && return 2
+    [ "$readable" = "1" ] && return 1
+    return 3
+}
+
 # 获取无线 STA 配置段名称（兼容mode=sta和mode='sta'两种格式）
 get_sta_section() {
     uci show wireless | grep -E "mode='?sta'?" | head -1 | cut -d. -f2
@@ -277,16 +357,16 @@ validate_password() {
 
 # 动态获取唯一STA接口的network名称
 # 使用jsonfilter方式，性能更好
-# 结果通过 STA_NETWORK_RESULT 返回（不能用 $(...) 取，否则子shell里的计数回不到调用方）
+# 结果通过 STA_NETWORK_RESULT 返回，成功时为network名(如wwan)，失败为空
 # 全局变量 STA_NETWORK_COUNT 记录STA接口数量
 # STA_NETWORK_RESULT 保存唯一STA接口的network名称
 get_single_sta_network() {
     local wireless_status=$(ubus call network.wireless status 2>/dev/null)
-
+    
     # 统计STA接口数量
     STA_NETWORK_COUNT=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"]' 2>/dev/null | grep -c '"section"')
     STA_NETWORK_RESULT=""
-
+    
     if [ "$STA_NETWORK_COUNT" -eq 1 ]; then
         # 只有1个STA时返回其network名称
         STA_NETWORK_RESULT=$(echo "$wireless_status" | jsonfilter -e '@.*.interfaces[@.config.mode="sta"].config.network[0]' 2>/dev/null)
@@ -547,9 +627,12 @@ save_wireless_settings() {
         }
     fi
     
-    uci commit wireless
-    wifi reload
-    
+    if ! uci commit wireless; then
+        json_error_response "无线配置提交失败"
+        return
+    fi
+    reload_wireless
+
     json_init
     json_add_string "status" "success"
     json_add_string "message" "无线设置已保存"
@@ -559,21 +642,18 @@ save_wireless_settings() {
 # 连接WiFi
 connect() {
     json_load "$1"
-    
-    local ssid encryption key band
+
+    local ssid encryption key band sta_network wait_rc
     json_get_var ssid ssid
     json_get_var encryption encryption
     json_get_var key key
     json_get_var band band
 
     if [ -z "$ssid" ]; then
-        json_init
-        json_add_string "status" "error"
-        json_add_string "message" "请输入WiFi名称"
-        json_dump
+        json_error_response "请输入WiFi名称"
         return
     fi
-
+    
     # 校验密码
     if [ "$encryption" != "none" ] && [ "$encryption" != "owe" ]; then
         if ! validate_password "$key"; then
@@ -584,7 +664,7 @@ connect() {
             return
         fi
     fi
-
+    
     # 标准化band格式
     case "$band" in
         2g|2G|2.4g|2.4G) band="2g" ;;
@@ -618,50 +698,90 @@ connect() {
         sta_section="wifinet_sta"
         
         # 1. 创建无线STA接口
-        uci set wireless.wifinet_sta=wifi-iface
-        uci set wireless.wifinet_sta.device="$target_device"
-        uci set wireless.wifinet_sta.mode='sta'
-        uci set wireless.wifinet_sta.network='wwan'
-        uci set wireless.wifinet_sta.ssid="$ssid"
-        uci set wireless.wifinet_sta.encryption="$encryption"
-        [ -n "$key" ] && uci set wireless.wifinet_sta.key="$key"
+        if ! {
+            uci set wireless.wifinet_sta=wifi-iface &&
+            uci set wireless.wifinet_sta.device="$target_device" &&
+            uci set wireless.wifinet_sta.mode='sta' &&
+            uci set wireless.wifinet_sta.network='wwan' &&
+            uci set wireless.wifinet_sta.ssid="$ssid" &&
+            uci set wireless.wifinet_sta.encryption="$encryption" &&
+            { [ -z "$key" ] || uci set wireless.wifinet_sta.key="$key"; }
+        }; then
+            json_error_response "无线STA配置失败"
+            return
+        fi
         
         # 2. 创建网络接口
-        uci set network.wwan=interface
-        uci set network.wwan.proto='dhcp'
+        if ! {
+            uci set network.wwan=interface &&
+            uci set network.wwan.proto='dhcp'
+        }; then
+            json_error_response "中继网络配置失败"
+            return
+        fi
         
         # 3. 动态获取WAN zone并添加wwan
         local wan_zone=$(uci show firewall | grep "name='wan'" | head -1 | cut -d. -f2)
         [ -z "$wan_zone" ] && wan_zone="@zone[1]"
-        uci add_list firewall."$wan_zone".network='wwan'
+        if ! uci add_list firewall."$wan_zone".network='wwan'; then
+            json_error_response "防火墙配置失败"
+            return
+        fi
         
         # 4. 提交并应用
-        uci commit wireless
-        uci commit network
-        uci commit firewall
+        if ! uci commit wireless || ! uci commit network || ! uci commit firewall; then
+            json_error_response "中继配置提交失败"
+            return
+        fi
         
-        # 5. 重载网络（最优方案：热重载 + 防火墙）
-        wifi reload
-        sleep 3
-        /etc/init.d/network reload
-        /etc/init.d/firewall reload
-        
+        # 5. 重载无线+网络+防火墙 (fail-open, 见 reload_network_full 注释)
+        reload_network_full
+        wait_for_sta_connection "$ssid" "wwan"
+        wait_rc=$?
+        if [ "$wait_rc" = "1" ]; then
+            json_error_response "中继配置已保存，但未能连上 $ssid，请检查热点名称和密码"
+            return
+        fi
+
         log_message "中继模式已自动创建并连接: $ssid"
     else
         # STA接口已存在，直接更新配置
-        uci set wireless."$sta_section".device="$target_device"
-        uci set wireless."$sta_section".ssid="$ssid"
-        uci set wireless."$sta_section".encryption="$encryption"
-        uci set wireless."$sta_section".key="$key"
-        uci commit wireless
-        wifi reload
-        
+        sta_network=$(uci get wireless."$sta_section".network 2>/dev/null)
+        if [ -z "$sta_network" ]; then
+            json_error_response "STA接口未配置网络"
+            return
+        fi
+        if ! {
+            uci set wireless."$sta_section".device="$target_device" &&
+            uci set wireless."$sta_section".ssid="$ssid" &&
+            uci set wireless."$sta_section".encryption="$encryption" &&
+            uci set wireless."$sta_section".key="$key"
+        }; then
+            json_error_response "无线STA配置失败"
+            return
+        fi
+        if ! uci commit wireless; then
+            json_error_response "无线配置提交失败"
+            return
+        fi
+        reload_wireless
+        wait_for_sta_connection "$ssid" "$sta_network"
+        wait_rc=$?
+        if [ "$wait_rc" = "1" ]; then
+            json_error_response "配置已保存，但未能连上 $ssid，请检查热点名称和密码"
+            return
+        fi
+
         log_message "手动连接热点: $ssid 密码: $key 频段: $band 加密: $encryption"
     fi
-    
+
     json_init
     json_add_string "status" "success"
-    json_add_string "message" "WiFi配置已更新"
+    if [ "$wait_rc" = "2" ]; then
+        json_add_string "message" "已连接到 $ssid，正在获取IP地址"
+    else
+        json_add_string "message" "WiFi配置已更新"
+    fi
     json_dump
 }
 
@@ -989,8 +1109,11 @@ auto_switch() {
         uci set wireless."$sta_section".ssid="$name"
         uci set wireless."$sta_section".encryption="$encryption"
         uci set wireless."$sta_section".key="$password"
-        uci commit wireless
-        wifi reload
+        if ! uci commit wireless; then
+            json_error_response "自动切换配置提交失败"
+            return
+        fi
+        reload_wireless
         
         # 核心逻辑修改：统计 SWITCH_COUNT (wifi 重载次数)
         # 只要执行了 wifi reload，无论后续连接成功与否，都要累加计数
@@ -1434,7 +1557,7 @@ HEADER
 enable_relay() {
     json_load "$1"
     
-    local ssid key encryption band
+    local ssid key encryption band wait_rc
     json_get_var ssid ssid
     json_get_var key key
     json_get_var encryption encryption
@@ -1518,21 +1641,29 @@ enable_relay() {
     uci add_list firewall."$wan_zone".network='wwan'
     
     # 4. 提交并应用
-    uci commit wireless
-    uci commit network
-    uci commit firewall
+    if ! uci commit wireless || ! uci commit network || ! uci commit firewall; then
+        json_error_response "中继配置提交失败"
+        return
+    fi
     
-    # 5. 重载网络（最优方案：热重载 + 防火墙）
-    wifi reload
-    sleep 3
-    /etc/init.d/network reload
-    /etc/init.d/firewall reload
-    
+    # 5. 重载无线+网络+防火墙 (fail-open, 见 reload_network_full 注释)
+    reload_network_full
+    wait_for_sta_connection "$ssid" "wwan"
+    wait_rc=$?
+    if [ "$wait_rc" = "1" ]; then
+        json_error_response "中继配置已保存，但未能连上 $ssid，请检查热点名称和密码"
+        return
+    fi
+
     log_message "中继模式已开启"
-    
+
     json_init
     json_add_string "status" "success"
-    json_add_string "message" "中继模式已开启，正在连接..."
+    if [ "$wait_rc" = "2" ]; then
+        json_add_string "message" "已连接到 $ssid，正在获取IP地址"
+    else
+        json_add_string "message" "中继模式已开启，已连接到 $ssid"
+    fi
     json_dump
 }
 
@@ -1567,16 +1698,14 @@ disable_relay() {
     fi
     
     # 4. 提交配置
-    uci commit wireless
-    uci commit network
-    uci commit firewall
+    if ! uci commit wireless || ! uci commit network || ! uci commit firewall; then
+        json_error_response "关闭中继配置提交失败"
+        return
+    fi
     
-    # 5. 重载网络（最优方案：热重载 + 防火墙）
-    wifi reload
-    sleep 3
-    /etc/init.d/network reload
-    /etc/init.d/firewall reload
-    
+    # 5. 重载无线+网络+防火墙 (fail-open, 见 reload_network_full 注释)
+    reload_network_full
+
     log_message "中继模式已关闭"
     
     json_init
@@ -1596,10 +1725,7 @@ case "$1" in
         case "$2" in
             save_wireless_settings|connect|save_network|delete_networks|save_order|save_settings|reset_retry_count|enable_relay|disable_relay|auto_switch)
                 if ! check_storage_space; then
-                    json_init
-                    json_add_string "status" "error"
-                    json_add_string "message" "存储空间不足，无法保存配置"
-                    json_dump
+                    json_error_response "存储空间不足，无法保存配置"
                     exit 0
                 fi
                 ;;
@@ -1625,7 +1751,12 @@ case "$1" in
             test_push) test_push ;;
             enable_relay) enable_relay "$3" ;;
             disable_relay) disable_relay ;;
+            *)
+                # 兜底: 未知方法也必须回一个合法 JSON。否则 www/cgi-bin/wx-auth.sh
+                # 会把空响应直接回给前端, 前端只能报"服务器返回空响应", 看不出是方法名写错了。
+                # 方法名来自 URL 查询串, 回显前过滤成安全字符集并截断。
+                json_error_response "未知方法: $(echo "$2" | tr -cd 'a-zA-Z0-9_' | cut -c1-32)"
+                ;;
         esac
         ;;
 esac
-
