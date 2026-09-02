@@ -21,7 +21,4 @@ echo 'src-git nas https://github.com/linkease/ddnsto-openwrt-package.git;main' >
 # Nikki feed 源（提供 Nikki、Mihomo 及 LuCI 管理界面）
 echo 'src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main' >> feeds.conf.default
 
-# wechatpush feed 源（提供最新版 luci-app-wechatpush）
-echo 'src-git wechatpush https://github.com/aguowork/luci-app-wechatpush.git;main' >> feeds.conf.default
-
 echo "diy-part1.sh 执行完成 - feed 源已添加"

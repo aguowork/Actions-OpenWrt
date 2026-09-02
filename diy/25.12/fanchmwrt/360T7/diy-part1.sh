@@ -18,7 +18,4 @@
 # ddnsto feed 源（提供新版 ddnsto 及相关 LuCI 应用）
 echo 'src-git nas https://github.com/linkease/ddnsto-openwrt-package.git;main' >> feeds.conf.default
 
-# wechatpush feed 源（提供最新版 luci-app-wechatpush）
-echo 'src-git wechatpush https://github.com/aguowork/luci-app-wechatpush.git;main' >> feeds.conf.default
-
 echo "diy-part1.sh 执行完成 - feed 源已添加"

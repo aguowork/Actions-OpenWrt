@@ -21,6 +21,11 @@ echo "开始处理第三方包..."
 echo "正在添加 luci-app-adguardhome..."
 git clone --depth=1 https://github.com/kongfl888/luci-app-adguardhome.git package/luci-app-adguardhome
 
+# 2. 添加最新版 luci-app-wechatpush（作为普通 package 引入，不能配置为 src-git feed）
+echo "正在添加 luci-app-wechatpush..."
+rm -rf package/feeds/wechatpush/luci-app-wechatpush package/luci-app-wechatpush
+git clone --depth=1 https://github.com/aguowork/luci-app-wechatpush.git package/luci-app-wechatpush
+
 echo "第三方包处理完成！"
 
 # ============================================
