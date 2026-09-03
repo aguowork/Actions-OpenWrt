@@ -18,10 +18,16 @@
 
 echo "开始处理第三方包..."
 
-# 移除 ImmortalWrt/LuCI 中的旧版 luci-app-appfilter，并引入最新版 OAF。
-# feeds install -a 会创建 package/feeds/luci 下的链接，因此两处都清理。
-echo "正在替换 luci-app-appfilter 为最新版 OpenAppFilter..."
-rm -rf package/feeds/luci/luci-app-appfilter \
+# 移除树内自带的旧版 OAF，引入原作者最新版 OpenAppFilter。
+# 注意：packages feed 的 net/open-app-filter 一份 Makefile 同时定义了 appfilter 和 kmod-oaf，
+# 必须连它一起删，否则与下面 clone 的版本重复定义，kconfig 会报
+# "PACKAGE_kmod-oaf is selected by PACKAGE_kmod-oaf" 并丢弃该符号，
+# 结果 kmod-oaf 不产 ipk，编译最后的 package/install 阶段 opkg 解析依赖失败。
+# feeds install -a 会创建 package/feeds/* 下的链接，因此 feeds/ 与 package/feeds/ 两处都要清理。
+echo "正在替换旧版 OAF 为最新版 OpenAppFilter..."
+rm -rf feeds/packages/net/open-app-filter \
+       package/feeds/packages/open-app-filter \
+       package/feeds/luci/luci-app-appfilter \
        feeds/luci/applications/luci-app-appfilter \
        package/luci-app-appfilter \
        package/OpenAppFilter
