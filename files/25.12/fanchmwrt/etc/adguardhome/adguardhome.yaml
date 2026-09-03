@@ -76,8 +76,11 @@ dns:
   anonymize_client_ip: false
 
 # ---- 拦截相关全部关掉：只要日志，不要拦截 ----
-# 内置默认自带 5 条规则订阅（其中 AdGuard DNS filter 默认启用），
-# 这里必须显式写成空数组顶掉，否则一开机就去下载规则、占内存。
+# 内置默认自带 2 条规则订阅（AdGuard DNS filter 默认启用，AdAway 默认关闭），
+# 而且 filtering_enabled 的内置默认是 true——所以下面这两处都必须显式顶掉，
+# 否则一开机就去下载规则、占内存，而且真的会拦。
+# （默认值出处：internal/home/config.go 里的 var config，Filters 两条、
+#  Filtering.FilteringEnabled: true。）
 filters: []
 whitelist_filters: []
 user_rules: []
