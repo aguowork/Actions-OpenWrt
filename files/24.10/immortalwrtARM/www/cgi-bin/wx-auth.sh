@@ -69,6 +69,66 @@ check_auth() {
     fi
 }
 
+# === OTA 更新配置（不依赖 git：改用 HTTP 拉取 Gitee 归档，省掉 git + git-http 整套） ===
+# 直接写完整 URL：路由器上排障时能原样复制到浏览器验证。换仓库改这两行即可。
+GITEE_TAGS_API="https://gitee.com/api/v5/repos/okuni/wireless/tags"
+GITEE_ARCHIVE_BASE="https://gitee.com/okuni/wireless/repository/archive"
+VER_FILE="/www/wx/.ver"
+
+# 下载 URL 到文件：curl 优先，其次 wget / uclient-fetch（OpenWrt 三者至少有一个）
+http_download() {
+    local url="$1"
+    local out="$2"
+    rm -f "$out"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --connect-timeout 15 --max-time 180 -o "$out" "$url" 2>/dev/null
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 30 -O "$out" "$url" 2>/dev/null
+    elif command -v uclient-fetch >/dev/null 2>&1; then
+        uclient-fetch -q -T 30 -O "$out" "$url" 2>/dev/null
+    else
+        return 127
+    fi || { rm -f "$out"; return 1; }
+    [ -s "$out" ] || { rm -f "$out"; return 1; }
+}
+
+# 读取本机已安装版本，读不到按 0.0.0 处理
+get_local_version() {
+    local ver=""
+    [ -f "$VER_FILE" ] && ver=$(tr -d ' \t\r\n' < "$VER_FILE" 2>/dev/null)
+    # 去掉 UTF-8 BOM：.ver 若由 Windows PowerShell 5.1 的 Out-File -Encoding utf8 生成会带
+    # 3 字节 BOM，BOM 混进版本号会让"检查更新"永远显示发现新版本，界面上还会多一个不可见字符
+    ver=${ver#"$(printf '\357\273\277')"}
+    [ -n "$ver" ] || ver="0.0.0"
+    printf '%s' "$ver"
+}
+
+# 版本号归一化：忽略 v/V 前缀和大小写差异
+# （.ver 里写的是 V3.0，Gitee tag 是 v3.0，直接字符串比较会永远显示"发现新版本"）
+version_key() {
+    printf '%s' "$1" | tr -d ' \t\r\n' | sed 's/^[vV]//' | tr 'A-Z' 'a-z'
+}
+
+# 取远程最新 tag：走 Gitee OpenAPI，取不到时返回空并以非 0 退出
+get_remote_version() {
+    local json="/tmp/wx_gitee_tags.json"
+    local list=""
+    local latest=""
+    http_download "$GITEE_TAGS_API" "$json" || return 1
+    if command -v jq >/dev/null 2>&1; then
+        list=$(jq -r '.[].name // empty' "$json" 2>/dev/null)
+    fi
+    # jq 缺失或解析失败时退回文本解析：每个 tag 对象的第一个 "name" 就是 tag 名
+    [ -n "$list" ] || list=$(sed 's/},{/}\n{/g' "$json" | sed -n 's/^[^{]*{*"name":"\([^"]*\)".*/\1/p')
+    rm -f "$json"
+    [ -n "$list" ] || return 1
+    latest=$(printf '%s\n' "$list" | sort -V 2>/dev/null | tail -n 1)
+    # busybox 未编译 sort -V 时退回普通排序
+    [ -n "$latest" ] || latest=$(printf '%s\n' "$list" | sort | tail -n 1)
+    [ -n "$latest" ] || return 1
+    printf '%s' "$latest"
+}
+
 case "$ACTION" in
     check)
         # 检查密码是否已设置（使用独立文件，不污染系统 shadow）
@@ -208,102 +268,88 @@ case "$ACTION" in
     checkUpdate)
         # 检查更新（只检查版本，不执行更新）
         check_auth
-        
-        GITEE_REPO="https://gitee.com/okuni/wireless.git"
-        VER_FILE="/www/wx/.ver"
-        
-        # 读取当前版本
-        if [ -f "$VER_FILE" ]; then
-            CURRENT_VERSION=$(cat "$VER_FILE" 2>/dev/null)
-        else
-            CURRENT_VERSION="0.0.0"
-        fi
-        
-        # 检查git是否可用
-        if ! command -v git >/dev/null 2>&1; then
-            opkg update >/dev/null 2>&1
-            opkg install git git-http >/dev/null 2>&1
-            if ! command -v git >/dev/null 2>&1; then
-                echo '{"status":"error","message":"无法安装git，请检查网络连接"}'
-                exit 0
-            fi
-        fi
-        
-        # 获取远程最新tag版本
-        REMOTE_TAGS=$(git ls-remote --tags "$GITEE_REPO" 2>/dev/null)
-        if [ -z "$REMOTE_TAGS" ]; then
-            # 无tag时视为已是最新版本（不使用commit hash，避免用户困惑）
-            echo "{\"status\":\"latest\",\"current_version\":\"$CURRENT_VERSION\",\"latest_version\":\"$CURRENT_VERSION\",\"message\":\"已是最新版本\"}"
+
+        CURRENT_VERSION=$(get_local_version)
+        LATEST_VERSION=$(get_remote_version)
+
+        # 拉不到 tag 列表说明网络或接口异常，不能当成"已是最新版本"糊过去
+        if [ -z "$LATEST_VERSION" ]; then
+            log_message "检查更新失败：无法获取远程版本列表"
+            echo '{"status":"error","message":"无法连接更新服务器，请检查网络"}'
             exit 0
-        else
-            # 有tag时使用最新tag
-            LATEST_VERSION=$(echo "$REMOTE_TAGS" | sed 's/.*refs\/tags\///' | sed 's/\^{}//' | grep -v '\^' | sort -V | tail -n 1)
         fi
-        
+
         # 返回版本信息
-        if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+        if [ "$(version_key "$CURRENT_VERSION")" = "$(version_key "$LATEST_VERSION")" ]; then
             echo "{\"status\":\"latest\",\"current_version\":\"$CURRENT_VERSION\",\"latest_version\":\"$LATEST_VERSION\",\"message\":\"已是最新版本\"}"
         else
             echo "{\"status\":\"available\",\"current_version\":\"$CURRENT_VERSION\",\"latest_version\":\"$LATEST_VERSION\",\"message\":\"发现新版本\"}"
         fi
         ;;
     doUpdate)
-        # 执行更新（下载并通过 install.sh 安装）
+        # 执行更新（下载 tag 归档并通过 install.sh 安装）
         check_auth
-        
-        GITEE_REPO="https://gitee.com/okuni/wireless.git"
+
         TEMP_DIR="/tmp/gitee_update"
-        VER_FILE="/www/wx/.ver"
-        
-        # 读取当前版本
-        if [ -f "$VER_FILE" ]; then
-            CURRENT_VERSION=$(cat "$VER_FILE" 2>/dev/null)
-        else
-            CURRENT_VERSION="0.0.0"
-        fi
-        
-        # 检查git是否可用（正常流程下checkUpdate已安装）
-        if ! command -v git >/dev/null 2>&1; then
-            echo '{"status":"error","message":"git未安装，请先点击检查更新"}'
+        TARBALL="/tmp/wx_update.tar.gz"
+
+        CURRENT_VERSION=$(get_local_version)
+        LATEST_VERSION=$(get_remote_version)
+
+        if [ -z "$LATEST_VERSION" ]; then
+            echo '{"status":"error","message":"无法连接更新服务器，请检查网络"}'
             exit 0
         fi
-        
-        # 获取远程最新tag版本
-        REMOTE_TAGS=$(git ls-remote --tags "$GITEE_REPO" 2>/dev/null)
-        if [ -z "$REMOTE_TAGS" ]; then
-            # 无tag时视为已是最新版本
-            echo "{\"status\":\"latest\",\"message\":\"已是最新版本 $CURRENT_VERSION\"}"
-            exit 0
-        else
-            LATEST_VERSION=$(echo "$REMOTE_TAGS" | sed 's/.*refs\/tags\///' | sed 's/\^{}//' | grep -v '\^' | sort -V | tail -n 1)
-        fi
-        
+
         # 版本对比（二次确认）
-        if [ "$CURRENT_VERSION" = "$LATEST_VERSION" ]; then
+        if [ "$(version_key "$CURRENT_VERSION")" = "$(version_key "$LATEST_VERSION")" ]; then
             echo "{\"status\":\"latest\",\"message\":\"已是最新版本 $CURRENT_VERSION\"}"
             exit 0
         fi
-        
-        # 清理并克隆
-        rm -rf "$TEMP_DIR"
-        if ! git clone --depth 1 "$GITEE_REPO" "$TEMP_DIR" 2>/dev/null; then
+
+        # 下载该 tag 的源码归档
+        rm -rf "$TEMP_DIR" "$TARBALL"
+        if ! http_download "$GITEE_ARCHIVE_BASE/$LATEST_VERSION.tar.gz" "$TARBALL"; then
             echo '{"status":"error","message":"下载更新包失败，请检查网络"}'
             exit 0
         fi
-        
-        # 检查 install.sh 是否存在（核心验证）
-        if [ ! -f "$TEMP_DIR/scripts/install.sh" ]; then
+
+        # 解包：先试 tar 自带的 gzip 直读，busybox 未编译该特性时退回管道解压
+        mkdir -p "$TEMP_DIR"
+        if ! tar -xzf "$TARBALL" -C "$TEMP_DIR" 2>/dev/null; then
+            if ! gzip -dc "$TARBALL" 2>/dev/null | tar -x -C "$TEMP_DIR" 2>/dev/null; then
+                rm -rf "$TEMP_DIR" "$TARBALL"
+                echo '{"status":"error","message":"更新包解压失败"}'
+                exit 0
+            fi
+        fi
+        rm -f "$TARBALL"
+
+        # 定位 install.sh（核心验证）
+        # Gitee 归档会多包一层 "项目名-tag" 目录，目录名不写死，兼容两种结构
+        INSTALL_SH=""
+        if [ -f "$TEMP_DIR/scripts/install.sh" ]; then
+            INSTALL_SH="$TEMP_DIR/scripts/install.sh"
+        else
+            for UPDATE_SUBDIR in "$TEMP_DIR"/*; do
+                if [ -f "$UPDATE_SUBDIR/scripts/install.sh" ]; then
+                    INSTALL_SH="$UPDATE_SUBDIR/scripts/install.sh"
+                    break
+                fi
+            done
+        fi
+        if [ -z "$INSTALL_SH" ]; then
             rm -rf "$TEMP_DIR"
             echo '{"status":"error","message":"更新源异常，请联系开发者获取支持"}'
             exit 0
         fi
-        
+
         # 先返回响应，再异步执行安装脚本（因为install.sh会重启uhttpd导致CGI中断）
         log_message "系统更新开始: $CURRENT_VERSION → $LATEST_VERSION"
         echo "{\"status\":\"success\",\"current_version\":\"$CURRENT_VERSION\",\"latest_version\":\"$LATEST_VERSION\",\"message\":\"更新成功\"}"
-        
+
         # 异步执行安装脚本（延迟1秒确保响应已发送）
-        ( sleep 1 && sh "$TEMP_DIR/scripts/install.sh" >/dev/null 2>&1 && rm -rf "$TEMP_DIR" ) &
+        ( sleep 1 && sh "$INSTALL_SH" >/dev/null 2>&1 && rm -rf "$TEMP_DIR" ) &
         ;;
     ubus)
         check_auth

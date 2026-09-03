@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # 自动修复 Windows 换行符问题（如果从 Windows 上传）
-if grep -q $'\r' "$0" 2>/dev/null; then
+if grep -q "$(printf '\r')" "$0" 2>/dev/null; then
     sed -i 's/\r$//' "$0"
     exec sh "$0" "$@"
 fi

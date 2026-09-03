@@ -17,16 +17,20 @@
 
 echo "开始处理第三方包..."
 
-# 1. 添加 luci-app-adguardhome（项目中不存在，直接添加）
-echo "正在添加 luci-app-adguardhome..."
-git clone --depth=1 https://github.com/kongfl888/luci-app-adguardhome.git package/luci-app-adguardhome
+# 注：luci-app-adguardhome 不在这里处理 —— 25.12 的 luci feed
+# （applications/luci-app-adguardhome）已经自带同名包，直接用官方那份。
+# 官方版是 JS 页面，LUCI_DEPENDS 硬依赖 +adguardhome，AdGuardHome 主程序会一起编进
+# 固件（官方 apk 约 10.8 MiB），刷完即可用，不必在路由器上从 GitHub 现下载到 overlay。
+# 别再 clone kongfl888/luci-app-adguardhome：包名和 feed 自带的完全相同，两份并存时
+# kconfig 只保留一份且留哪份不可控（kmod-oaf 被丢弃就是这么来的）。
+# 官方版只有 po/lo（老挝语）没有中文 po，所以也别加 luci-i18n-adguardhome-zh-cn，那是死行。
 
-# 2. 添加最新版 luci-app-wechatpush（作为普通 package 引入，不能配置为 src-git feed）
+# 1. 添加最新版 luci-app-wechatpush（作为普通 package 引入，不能配置为 src-git feed）
 echo "正在添加 luci-app-wechatpush..."
 rm -rf package/feeds/wechatpush/luci-app-wechatpush package/luci-app-wechatpush
 git clone --depth=1 https://github.com/aguowork/luci-app-wechatpush.git package/luci-app-wechatpush
 
-# 3. 添加 luci-app-wechatpush 的流量监控依赖 wrtbwmon
+# 2. 添加 luci-app-wechatpush 的流量监控依赖 wrtbwmon
 # 直接用上游 brvphoenix/wrtbwmon：活跃维护，Makefile 版本号 1.2.1 与代码的实际能力一致。
 # 不要换回 gitbruc/openwrt-wrtbwmon —— 那份代码与上游逐字节相同，但版本号仍写着 1.0.1，
 # 而 luci-app-wechatpush 靠版本号选调用方式（>= 1.2.0 用 wrtbwmon -f，<= 1.0.0 用 wrtbwmon update），
