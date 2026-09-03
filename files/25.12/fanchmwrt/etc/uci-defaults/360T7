@@ -1,14 +1,18 @@
 #!/bin/sh
-# fanchmwrt-25.12.4 AX6000 首次启动 UCI 配置。
+# fanchmwrt-25.12.4 Qihoo 360 T7 首次启动 UCI 配置。
 #
 # 本脚本安装到 /etc/uci-defaults，并在系统首次启动时执行。
 # 三个设备各一份，编译时由本设备的 diy-part2.sh 只保留自己那份。
-# 以下配置段名称已经在实际运行的 25.12.4 AX6000 系统中确认。
 #
+# 段名沿用 AX6000 那份（25.12 走 mac80211/mt76，radio0=2.4G、radio1=5G 的
+# 通用命名三台设备一致，不像 24.10 的 mtwifi-cfg 把芯片型号写进段名）。
 # 每台设备真正要各自确认的只有下面三组，其余部分三份文件应保持一致：
 #   AP 名字    default_radio0.ssid / default_radio1.ssid
 #   中继上游   wifinet2.device（哪个频段）/ .ssid / .key
 #   推送名字   wechatpush.config.device_name
+#
+# 注意：下面中继上游的 SSID/密码沿用 24.10 那份 360T7 配置，本机尚未实际部署过
+# 25.12，刷机前请确认这个上游还有效。
 
 # 防火墙：允许无线中继网络使用 WAN 区域。
 uci -q delete firewall.cfg02dc81.network
@@ -24,37 +28,38 @@ uci set network.wwan='interface'
 uci set network.wwan.proto='dhcp'
 uci commit network
 
-# 无线接入点配置。
+# 无线接入点配置。24.10 的 mtwifi.sh sed 给 360T7 两个频段用的是同一个名字 Y。
 uci set wireless.radio0.channel='auto'
 uci set wireless.radio0.htmode='HE40'
 uci set wireless.radio0.cell_density='0'
-uci set wireless.default_radio0.ssid='G'
+uci set wireless.default_radio0.ssid='Y'
 uci set wireless.default_radio0.encryption='sae-mixed'
 uci set wireless.default_radio0.key='88888888..'
 uci set wireless.default_radio0.ocv='0'
 
 uci set wireless.radio1.cell_density='0'
-uci set wireless.default_radio1.ssid='G5G'
+uci set wireless.default_radio1.ssid='Y'
 uci set wireless.default_radio1.encryption='sae-mixed'
 uci set wireless.default_radio1.key='88888888..'
 uci set wireless.default_radio1.ocv='0'
 
-# 无线中继：使用 radio1 连接上游 5 GHz 网络。
+# 无线中继：24.10 那份挂在 MT7981_1_1（2.4G），这里对应 radio0。
+# 上游若换成 5 GHz，把 device 改成 radio1 即可。
 uci set wireless.wifinet2='wifi-iface'
-uci set wireless.wifinet2.device='radio1'
+uci set wireless.wifinet2.device='radio0'
 uci set wireless.wifinet2.mode='sta'
 uci set wireless.wifinet2.network='wwan'
-uci set wireless.wifinet2.ssid='CMCC-Ptbf-5G'
+uci set wireless.wifinet2.ssid='Hjx'
 uci set wireless.wifinet2.encryption='psk2'
-uci set wireless.wifinet2.key='cccc5926'
+uci set wireless.wifinet2.key='HjxWpy2580'
 
-# AX6000 5 GHz 无线参数。
+# 5 GHz 无线参数。
 uci set wireless.radio1.htmode='HE80'
 uci set wireless.radio1.channel='auto'
 uci commit wireless
 
 # 微信推送里显示的设备名。25.12 之前漏了这行，三台机器都自称 OpenWrt。
-uci set wechatpush.config.device_name='AX6000'
+uci set wechatpush.config.device_name='360T7'
 uci commit wechatpush
 
 exit 0

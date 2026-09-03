@@ -61,9 +61,9 @@ sed -i 's/192.168.1.1/192.168.31.1/g' package/base-files/files/bin/config_genera
 # 修改主机名字（不能纯数字或使用中文）
 sed -i "s/hostname='.*'/hostname='VIVO-S7'/g" package/base-files/files/bin/config_generate
 
-# 修改闭源驱动 WiFi 名称
-sed -i 's/ImmortalWrt-2.4G/G/g' package/mtk/applications/mtwifi-cfg/files/mtwifi.sh
-sed -i 's/ImmortalWrt-5G/G5G/g' package/mtk/applications/mtwifi-cfg/files/mtwifi.sh
+# WiFi 名称不在这里改。25.12 的 fanchmwrt 用 OpenWrt 官方 mac80211/mt76 驱动，
+# 24.10 那个闭源 mtwifi-cfg 包在这棵树里根本不存在，对它的 sed 是空操作。
+# AP 名字和中继上游统一在 files/etc/uci-defaults/AX6000 里设。
 
 # 添加编译时间
 # LuCI 系统概况中追加编译时间信息（/etc/openwrt_release）
@@ -127,10 +127,20 @@ echo "设置wx项目脚本执行权限..."
 chmod +x files/www/cgi-bin/wx-auth.sh 2>/dev/null || true
 chmod +x files/usr/libexec/rpcd/wx-wireless 2>/dev/null || true
 chmod +x files/etc/wx/uninstall.sh 2>/dev/null || true
-# uci-defaults 下的脚本是被 /etc/init.d/boot 的 uci_apply_defaults 用
-# ( . "./文件" ) source 执行的，有没有可执行位都会跑（99-adguardhome-dns 同理），
-# 这里 chmod 只是保持惯例。
-chmod +x files/etc/uci-defaults/AX6000 2>/dev/null || true
+# uci-defaults：files/25.12 整棵树三台设备共用（工作流的 FILES_BASE_PATH 不带
+# matrix.device），三份设备脚本会同时进到每个固件里、全都执行一遍，后跑的盖掉先跑的。
+# 这里只留本设备那份，做法照 24.10 的 diy-part2.sh。
+# 别照抄 24.10 的 `find ! -name 'AX6000' -exec rm`：这个目录里还有一个跟设备无关的
+# 99-adguardhome-dns，会被一起删掉，AdGuardHome 就抢不到 53 端口，查询日志里
+# 全是 127.0.0.1。所以只按设备名删，名字不在列表里的一律留着。
+THIS_DEVICE='AX6000'
+for dev in AX6000 WR30U 360T7; do
+    [ "$dev" = "$THIS_DEVICE" ] || rm -f "files/etc/uci-defaults/$dev"
+done
+# 这些脚本是被 /etc/init.d/boot 的 uci_apply_defaults 用 ( . "./文件" ) source 执行的，
+# 有没有可执行位都会跑（99-adguardhome-dns 同理），chmod 只是保持惯例。
+chmod +x "files/etc/uci-defaults/$THIS_DEVICE" 2>/dev/null || true
+echo "uci-defaults 只保留 ${THIS_DEVICE}，目录现在是：$(ls files/etc/uci-defaults/ | tr '\n' ' ')"
 echo "wx项目权限设置完成！"
 
 echo "=========================================="
