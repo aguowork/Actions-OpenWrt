@@ -1,0 +1,126 @@
+# AdGuardHome 预置配置 —— 只为"查询日志"服务，不做广告拦截。
+#
+# 为什么要预置这份文件：
+#   官方 adguardhome 包把 /etc/adguardhome/adguardhome.yaml 写进了 conffiles，
+#   但并不安装它。配置不存在时 AdGuardHome 会进 http://路由器IP:3000 的安装向导，
+#   向导默认还要抢 53 端口。预置之后开机即用，不用再点向导。
+#
+# 只写与 AdGuardHome 内置默认值不同的键（外加几个关键键便于日后查阅）：
+#   internal/home/config.go 里的 config 变量已经带好全部默认值，
+#   parseConfig 是 yaml.Unmarshal(fileData, &config) 覆盖式解析，
+#   本文件没写的键一律沿用内置默认，不会被清成 0 或空。
+#   反过来，写错的键会被静默忽略（yaml.v3 不校验未知字段），改这里之后
+#   最好在 :3000 界面上确认一眼是否真的生效了。
+#
+# schema_version 必须等于程序的 LastSchemaVersion（0.107.74 对应 34）：
+#   写小了 AdGuardHome 会自动迁移并回写本文件，注释全丢；
+#   写大了直接拒绝启动。跟着 packages feed 升 adguardhome 版本时，
+#   同步核对 internal/configmigrate/configmigrate.go 里的 LastSchemaVersion。
+schema_version: 34
+
+# 界面语言。取值必须在 internal/home/i18n.go 的白名单里，简体中文就是 zh-cn。
+# （LuCI 里那个 luci-app-adguardhome 页面没有中文翻译，日常配置都在 :3000 这边做。）
+language: zh-cn
+
+http:
+  # 管理界面地址。3000 是 AdGuardHome 默认端口，和 uhttpd(80)、ttyd(7681) 不撞。
+  # 0.0.0.0 只是"所有接口"，WAN 侧入站由防火墙默认拦掉，不会暴露到公网。
+  address: 0.0.0.0:3000
+
+# :3000 管理界面的登录账号。password 只能是 bcrypt 哈希：校验走
+# internal/aghuser/aghuser.go 的 bcrypt.CompareHashAndPassword，golang 那个实现
+# 认 $2a$ / $2b$ / $2y$，成本 10 正是安装向导自己生成的默认值。填明文不会报错，
+# 只会永远登不上。键名就只有 name 和 password 两个（internal/home/auth.go 的
+# webUser 结构体，UserID 是 yaml:"-" 不要写），拼错同样不报错，会被 yaml.v3
+# 静默忽略、退化成"不用登录就能进"——改完务必去 :3000 试一次登录。
+#
+# 下面这行哈希是手工预置的：路由器只在内网、当前是测试用途，所以接受它跟着
+# 这个公开仓库一起公开。但要记住哈希公开就等于可以被离线爆破，
+# 所以别用你在别处也在用的密码。换密码见文件末尾。
+users:
+  - name: root
+    password: '$2a$10$lWFjepXYixBh8Wql8l/vk.cE9jjF0ZsUfm7bQ.L7SgMwNix5QAdjC'
+
+dns:
+  # 同时监听 IPv4 和 IPv6：odhcpd 会通过 RA 把路由器自己当 DNS 通告给客户端，
+  # 只听 0.0.0.0 的话 IPv6 那条路径没人应答（'::' 必须加引号，否则不是合法 YAML）。
+  bind_hosts:
+    - 0.0.0.0
+    - '::'
+  # 必须是 53。查询日志要能看出"哪台设备"访问了什么，客户端就得直接问
+  # AdGuardHome；如果把它放 5353 再让 dnsmasq 转发过来，日志里每条记录的
+  # 客户端都是 127.0.0.1，这个功能就白装了。
+  # 53 让给 AdGuardHome、dnsmasq 改听 5353 的动作在
+  # /etc/uci-defaults/99-adguardhome-dns 里做。
+  port: 53
+  serve_plain_dns: true
+
+  # 上游指回 dnsmasq，而不是写死 223.5.5.5 之类的公共 DNS：
+  # 本机 WAN 在 PPPoE 拨号 / 动态 IP / 无线中继之间来回换，让 dnsmasq 继续用
+  # WAN 下发的上游最省事，三种模式都不用回来改这里；.lan 内网名字、DHCP
+  # 主机名、以及 nikki 之类插件对 dnsmasq 做的手脚也都还在链路上。
+  # 另外 AdGuardHome 被 procd 关在 jail 里，jail 没挂 /etc/resolv.conf，
+  # 上游只能写 IP，不能写域名。
+  upstream_dns:
+    - 127.0.0.1:5353
+  # 反查（PTR）也交给 dnsmasq：查询日志里就能显示设备主机名而不是光秃秃的 IP。
+  local_ptr_upstreams:
+    - 127.0.0.1:5353
+  use_private_ptr_resolvers: true
+
+  # 默认 20 次/秒/客户端。现在打进来的是真实设备而不是 dnsmasq 一个来源，
+  # 手机开一个网页就能牵出几十个域名，限速只会造成莫名其妙的解析失败。
+  ratelimit: 0
+
+  # 必须 false。true 会把客户端 IP 的尾段抹掉，日志里就分不出是哪台设备了。
+  anonymize_client_ip: false
+
+# ---- 拦截相关全部关掉：只要日志，不要拦截 ----
+# 内置默认自带 5 条规则订阅（其中 AdGuard DNS filter 默认启用），
+# 这里必须显式写成空数组顶掉，否则一开机就去下载规则、占内存。
+filters: []
+whitelist_filters: []
+user_rules: []
+filtering:
+  protection_enabled: true      # AdGuardHome 总开关，关掉界面会一直挂红色横条
+  filtering_enabled: false      # 不做规则匹配
+  parental_enabled: false
+  safebrowsing_enabled: false
+
+# ---- 查询日志：这份配置存在的唯一理由 ----
+querylog:
+  enabled: true
+  file_enabled: true
+  # 只留 24 小时。默认是 90 天（2160h），但 work_dir 默认为 /var/lib/adguardhome，
+  # 而 OpenWrt 的 /var 是指向 /tmp 的软链（tmpfs＝内存，见 base-files 的
+  # "$(LN) tmp $(1)/var"），90 天的 querylog.json 会一直往内存里堆——
+  # WR30U / 360T7 只有 256MB，几天就能把 tmpfs 撑爆。
+  # 代价：重启后日志清零（想长期保存见文件末尾）。
+  interval: 24h
+  size_memory: 1000
+
+statistics:
+  enabled: true
+  interval: 24h
+
+# ============================================================================
+# 事后想改的两件事，都不用重编固件：
+#
+# 1) 换 :3000 的登录密码（忘了密码也是同一套流程，不用重刷固件）
+#    AdGuardHome 0.107.74 的网页界面改不了密码（PUT /control/profile/update
+#    只收 name/language/theme），只能换掉上面 users: 里那行 bcrypt 哈希。
+#    路由器上现成的生成办法是让安装向导再跑一遍，然后把结果搬回来：
+#      /etc/init.d/adguardhome stop
+#      mv /etc/adguardhome/adguardhome.yaml /etc/adguardhome/adguardhome.yaml.bak
+#      /etc/init.d/adguardhome start        # 浏览器进 :3000 走向导设新账号密码
+#    向导写出的新文件里 users: 下面那两行就是要的东西：把它抄进 .bak，
+#      cp /etc/adguardhome/adguardhome.yaml.bak /etc/adguardhome/adguardhome.yaml
+#      /etc/init.d/adguardhome restart
+#    同时把这两行同步回本仓库，免得下次重刷又变回旧密码。
+#
+# 2) 让日志重启后还在（代价是写 flash，NAND 有寿命）
+#    改 /etc/config/adguardhome 的 work_dir，然后重启服务：
+#      uci set adguardhome.config.work_dir='/overlay/adguardhome'
+#      uci commit adguardhome && /etc/init.d/adguardhome restart
+#    这之后可以把上面的 querylog.interval 放大到 7d / 30d。
+# ============================================================================

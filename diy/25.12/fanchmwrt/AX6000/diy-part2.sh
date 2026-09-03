@@ -22,7 +22,8 @@ echo "开始处理第三方包..."
 # （applications/luci-app-adguardhome）已经自带同名包，直接用官方那份。
 # 官方版是 JS 页面，LUCI_DEPENDS 硬依赖 +adguardhome，AdGuardHome 主程序会一起编进
 # 固件（官方 apk 约 10.8 MiB），不必在路由器上从 GitHub 现下载到 overlay。
-# 注意包里不带 adguardhome.yaml，首次仍要去 http://路由器IP:3000 跑 AdGuardHome 自己的向导。
+# 包里不带 adguardhome.yaml，配置已在 files/25.12/fanchmwrt/etc/adguardhome/ 预置好
+# （只要查询日志、不做拦截），配套 etc/uci-defaults/99-adguardhome-dns 把 53 端口让给它。
 # 别再 clone kongfl888/luci-app-adguardhome：包名和 feed 自带的完全相同，两份并存时
 # kconfig 只保留一份且留哪份不可控（kmod-oaf 被丢弃就是这么来的）。
 # 官方版只有 po/lo（老挝语）没有中文 po，所以也别加 luci-i18n-adguardhome-zh-cn，那是死行。
@@ -126,7 +127,9 @@ echo "设置wx项目脚本执行权限..."
 chmod +x files/www/cgi-bin/wx-auth.sh 2>/dev/null || true
 chmod +x files/usr/libexec/rpcd/wx-wireless 2>/dev/null || true
 chmod +x files/etc/wx/uninstall.sh 2>/dev/null || true
-# uci-defaults 只会执行可执行脚本，确保 AX6000 首次启动配置能够运行。
+# uci-defaults 下的脚本是被 /etc/init.d/boot 的 uci_apply_defaults 用
+# ( . "./文件" ) source 执行的，有没有可执行位都会跑（99-adguardhome-dns 同理），
+# 这里 chmod 只是保持惯例。
 chmod +x files/etc/uci-defaults/AX6000 2>/dev/null || true
 echo "wx项目权限设置完成！"
 

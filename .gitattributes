@@ -4,5 +4,6 @@
 
 files/**/etc/config/* text eol=lf
 files/**/etc/crontabs/* text eol=lf
+files/**/etc/uci-defaults/* text eol=lf
 files/**/etc/wx/*.conf text eol=lf
 files/**/usr/libexec/rpcd/* text eol=lf

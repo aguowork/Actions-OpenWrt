@@ -1,0 +1,39 @@
+#!/bin/sh
+# 让 AdGuardHome 独占 53 端口，dnsmasq 退到 5353。
+#
+# 为什么必须动 dnsmasq：
+#   AdGuardHome 的"查询日志"记的是"谁来问的"。客户端必须直接把 DNS 问到
+#   AdGuardHome，日志里才会出现具体设备；如果让 dnsmasq 继续占 53、再把查询
+#   转发给 AdGuardHome，那么每一条记录的客户端都是 127.0.0.1，就分不出设备了。
+#
+# 改完之后的链路：
+#   客户端 -> AdGuardHome:53 -> dnsmasq:5353 -> WAN 下发的上游
+#   * DHCP 下发的 DNS 仍然是路由器自己的 IP（dnsmasq 只是换了监听端口，
+#     DHCP option 6 里不带端口），客户端不需要任何改动。
+#   * .lan 内网名字、DHCP 主机名、以及 nikki 之类插件对 dnsmasq 做的手脚
+#     都还在链路上，PPPoE 拨号 / 动态 IP / 无线中继三种模式都不用再改配置。
+#   * 路由器自己的 /tmp/resolv.conf 指向 127.0.0.1:53，也就是 AdGuardHome，
+#     所以 etc/JiaoBen 下的脚本、wechatpush、检查更新照样能解析域名。
+#
+# 时机：本文件由 /etc/init.d/boot 的 uci_apply_defaults 以
+#   ( . "./99-adguardhome-dns" ) 方式 source，跑在 dnsmasq(S19) 启动之前，
+#   所以这里不需要重启任何服务。执行成功后文件会被自动删除。
+#
+# 不想要这套链路：把本文件从 files/25.12/fanchmwrt/etc/uci-defaults/ 删掉重编。
+#   注意那样 AdGuardHome 会因为 53 被 dnsmasq 占着而起不来（:3000 界面能开，
+#   但查询日志永远是空的）。已经刷进路由器的机器怎么回滚见文件末尾。
+
+# 固件里没编 AdGuardHome 时什么都不做。
+# 绝不能出现"dnsmasq 让出了 53、却没人接管"的情况——那是整个局域网没有 DNS。
+[ -x /usr/bin/AdGuardHome ] || exit 0
+
+uci -q set dhcp.@dnsmasq[0].port='5353'
+uci -q commit dhcp
+
+# 在路由器上回滚（把 53 还给 dnsmasq）：
+#   uci set dhcp.@dnsmasq[0].port='53' && uci commit dhcp
+#   /etc/init.d/dnsmasq restart
+#   /etc/init.d/adguardhome stop && /etc/init.d/adguardhome disable
+# 反过来在已运行的机器上手工启用这套链路，则是上面两条 uci 命令改回 5353，
+# 再 /etc/init.d/dnsmasq restart && /etc/init.d/adguardhome restart。
+exit 0
