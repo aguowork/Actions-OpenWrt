@@ -94,6 +94,11 @@ sed -i 's/#wbzt\*\/[^ ]* \*/\*\/10 \*/' files/etc/crontabs/root
 sed -i "s/option enabled '0'/option enabled '1'/" files/etc/config/xhszt
 sed -i 's/#xhszt\*\/[^ ]* \*/\*\/30 \*/' files/etc/crontabs/root
 
+# 京东上架监控定时任务（默认关闭）
+# 该脚本为 #!/bin/sh，推送凭证走 /etc/JiaoBen/wxpusher.conf（与 wbzt/xhszt 同源，
+# 由上文的 WxPusher 写入步骤统一注入）。需要开启时取消下面一行注释即可（默认每10分钟）：
+#sed -i 's/#jd\*\/[^ ]* \*/\*\/10 \*/' files/etc/crontabs/root
+
 # 启用fcjh定时任务（每天18:00和22:00）
 sed -i '/fcjh\.sh/s/^#//' files/etc/crontabs/root
 
