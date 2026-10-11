@@ -1,0 +1,281 @@
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# OpenWrt 单固件自动编译脚本
+#
+# 编译流程说明：
+# 1. diy/single/part1.sh             # 在 feeds 更新前添加或调整软件源
+# 2. feeds update -a                 # 更新 feeds
+# 3. feeds install -a                # 安装 feeds 软件包
+# 4. 复制 defconfig 到 .config       # 加载基础配置
+# 5. 追加 firmware.config            # 选择设备和需要内置的插件
+# 6. diy/single/part2.sh             # 准备插件源码及其他自定义配置
+# 7. make defconfig                  # 合并配置并检查依赖
+# 8. make download                   # 下载源码
+# 9. make compile                    # 编译固件
+
+name: OpenWrt Single Firmware Build
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/hanwckf/immortalwrt-mt798x.git
+  REPO_BRANCH: openwrt-21.02
+  VERSION: "21.02"
+  UPLOAD_BIN_DIR: false
+  UPLOAD_FIRMWARE: true
+  UPLOAD_RELEASE: true
+  TZ: Asia/Shanghai
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+    - name: 📝 记录工作流开始时间
+      id: workflow_time
+      run: |
+        echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_OUTPUT"
+        echo "system_info=$(lsb_release -ds | tr -d '"')" >> "$GITHUB_OUTPUT"
+
+    - name: 📥 检出代码仓库
+      uses: actions/checkout@main
+
+    - name: 🔧 初始化编译环境
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -qq update
+        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gettext-base gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown "$USER:$GROUPS" /workdir
+
+    - name: 📦 克隆 OpenWrt 源码
+      working-directory: /workdir
+      run: |
+        df -hT "$PWD"
+        git clone "$REPO_URL" -b "$REPO_BRANCH" openwrt
+        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+    - name: ⚙️ 设置构建脚本路径
+      run: |
+        echo "CONFIG_FILE=./config/single/firmware.config" >> "$GITHUB_ENV"
+        echo "DIY_P1_SH=./diy/single/part1.sh" >> "$GITHUB_ENV"
+        echo "DIY_P2_SH=./diy/single/part2.sh" >> "$GITHUB_ENV"
+
+    - name: 🔌 执行 diy-part1.sh
+      run: |
+        chmod +x "$DIY_P1_SH"
+        cd openwrt
+        "$GITHUB_WORKSPACE/$DIY_P1_SH"
+
+    - name: 🔄 更新 feeds 源
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: 📦 安装 feeds 软件包
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: 📝 加载固件配置
+      run: |
+        cd openwrt
+        cp -f defconfig/mt7981-ax3000.config .config
+        # The repository defconfig enables many MT7981 devices; keep only the requested profile.
+        sed -i -E 's/^(CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_.*)=y$/# \1 is not set/' .config
+        cat "$GITHUB_WORKSPACE/$CONFIG_FILE" >> .config
+
+    - name: 🔧 执行 diy-part2.sh
+      run: |
+        chmod +x "$DIY_P2_SH"
+        cd openwrt
+        "$GITHUB_WORKSPACE/$DIY_P2_SH"
+
+    - name: 📂 加载单固件文件覆盖
+      run: |
+        FILES_DIR="$GITHUB_WORKSPACE/files/single"
+        if [ -d "$FILES_DIR" ]; then
+          mkdir -p openwrt/files
+          rsync -a --exclude='.gitkeep' "$FILES_DIR"/ openwrt/files/
+        fi
+
+    - name: ⬇️ 下载编译依赖
+      id: package
+      run: |
+        cd openwrt
+        make defconfig
+        DEVICE_CONFIGS=$(grep -E '^CONFIG_TARGET_DEVICE_.*_DEVICE_.*=y$' .config || true)
+        DEVICE_COUNT=$(printf '%s\n' "$DEVICE_CONFIGS" | sed '/^$/d' | wc -l)
+        if [ "$DEVICE_COUNT" -ne 1 ]; then
+          echo "Expected exactly one target device, found $DEVICE_COUNT" >&2
+          printf '%s\n' "$DEVICE_CONFIGS" >&2
+          exit 1
+        fi
+        make download -j8
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    - name: 🔨 编译固件
+      id: compile
+      run: |
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j"$(nproc)" || make -j1 || make -j1 V=s
+        DEVICE_NAME=$(sed -n 's/^CONFIG_TARGET_DEVICE_.*_DEVICE_\(.*\)=y$/\1/p' .config)
+        echo "DEVICE_NAME=$DEVICE_NAME" >> "$GITHUB_ENV"
+        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: 💾 检查磁盘空间使用情况
+      if: (!cancelled())
+      run: df -hT
+
+    - name: 📤 上传 bin 目录
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_${{ env.DEVICE_NAME }}_bin_${{ env.FILE_DATE }}
+        path: openwrt/bin
+
+    - name: 📦 整理固件文件
+      id: organize
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: 🏷️ 生成发布标签
+      id: tag
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M-single-${VERSION}")-${DEVICE_NAME}" >> "$GITHUB_OUTPUT"
+        touch release.txt
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: ⬆️ 上传固件到 Artifacts
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && !cancelled()
+      with:
+        name: OpenWrt_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        path: ${{ env.FIRMWARE }}
+
+    - name: 🚀 发布固件到 Release
+      uses: ncipollo/release-action@v1
+      if: steps.tag.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        artifacts: "${{ env.FIRMWARE }}/*"
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ steps.tag.outputs.release_tag }}
+        bodyFile: "release.txt"
+        allowUpdates: true
+        replacesArtifacts: true
+
+    - name: 🔗 获取固件下载链接
+      id: firmware
+      if: env.UPLOAD_RELEASE == 'true' && steps.tag.outputs.status == 'success' && !cancelled()
+      run: |
+        cd "${FIRMWARE}"
+        FIRMWARE_PATH=$(ls *-squashfs-sysupgrade.bin 2>/dev/null || ls *-sysupgrade.bin 2>/dev/null || ls *.bin 2>/dev/null | head -n 1)
+        if [ -n "$FIRMWARE_PATH" ]; then
+          echo "download_url=https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.release_tag }}/${FIRMWARE_PATH}" >> "$GITHUB_OUTPUT"
+        fi
+        echo "all_firmware_url=https://github.com/${{ github.repository }}/releases/tag/${{ steps.tag.outputs.release_tag }}" >> "$GITHUB_OUTPUT"
+
+    - name: 📧 发送编译完成通知
+      if: always()
+      run: |
+        format_time() {
+          local duration=$1
+          local hours=$((duration / 3600))
+          local minutes=$(((duration % 3600) / 60))
+          echo "${hours}h${minutes}m"
+        }
+
+        generate_firmware_links() {
+          if [ -n "${{ steps.firmware.outputs.download_url }}" ]; then
+            echo "<li>📥 升级固件：<a href='${{ steps.firmware.outputs.download_url }}' target='_blank'>点击下载</a></li>"
+            echo "<li>📥 完整固件：<a href='${{ steps.firmware.outputs.all_firmware_url }}' target='_blank'>点击查看</a></li>"
+          else
+            echo "<li>📥 升级固件：Release未发布</li>"
+            echo "<li>📥 完整固件：Release未发布</li>"
+          fi
+        }
+
+        escape_json() {
+          echo "$1" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g'
+        }
+
+        START_TIME="${{ steps.workflow_time.outputs.start_time }}"
+        END_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
+        DURATION=$(( $(date -d "$END_TIME" +%s) - $(date -d "$START_TIME" +%s) ))
+        BUILD_DURATION=$(format_time "$DURATION")
+
+        if [ "${{ steps.compile.outputs.status }}" = "success" ] && [ "${{ steps.organize.outputs.status }}" = "success" ]; then
+          BUILD_STATUS="✅"
+          STATUS_MSG="编译完成于"
+          FIRMWARE_LINE="$(generate_firmware_links)"
+        else
+          BUILD_STATUS="❌"
+          STATUS_MSG="编译失败于"
+          FIRMWARE_LINE=""
+        fi
+
+        NOTIFICATION=$(cat << EOM
+        <h2>🔄 OpenWrt 单固件编译通知</h2>
+        <h3>📋 编译环境信息：</h3>
+        <ul>
+          <li>运行环境: ${{ steps.workflow_time.outputs.system_info }}</li>
+          <li>源码分支: ${REPO_BRANCH}</li>
+          <li>源码仓库: $(basename "${REPO_URL}" .git)</li>
+          <li>开始时间: ${START_TIME}</li>
+        </ul>
+        <h3>${BUILD_STATUS} ${DEVICE_NAME:-WR30U}</h3>
+        <ul>
+          <li>⏱️ ${STATUS_MSG}: ${END_TIME}</li>
+          ${FIRMWARE_LINE}
+          <li>⌛ 总耗时: ${BUILD_DURATION}</li>
+        </ul>
+        EOM
+        )
+
+        ESCAPED_NOTIFICATION=$(escape_json "$NOTIFICATION")
+        JSON_DATA="{
+          \"appToken\": \"${{ secrets.WXPUSHER_TOKEN }}\",
+          \"content\": \"${ESCAPED_NOTIFICATION}\",
+          \"summary\": \"OpenWrt-${DEVICE_NAME:-WR30U} 固件编译已完成\",
+          \"contentType\": 2,
+          \"uids\": [\"${{ secrets.WXPUSHER_UIDS }}\"]
+        }"
+
+        if [ -n "${{ secrets.WXPUSHER_TOKEN }}" ] && [ -n "${{ secrets.WXPUSHER_UIDS }}" ]; then
+          if PUSH_RESPONSE=$(curl -fsS --connect-timeout 10 --max-time 20 \
+              -X POST -H "Content-Type: application/json" \
+              -d "${JSON_DATA}" \
+              https://wxpusher.zjiecode.com/api/send/message); then
+            if echo "${PUSH_RESPONSE}" | jq -e '.code == 1000 and .success == true' >/dev/null; then
+              echo "编译完成通知发送成功"
+            else
+              PUSH_MESSAGE=$(echo "${PUSH_RESPONSE}" | jq -r '.msg // "未知业务错误"' 2>/dev/null || true)
+              echo "::warning::通知发送失败：${PUSH_MESSAGE}"
+            fi
+          else
+            echo "::warning::通知接口连接失败，但不影响工作流"
+          fi
+        else
+          echo "未配置 WXPUSHER secrets，跳过通知发送"
+        fi
+
+    - name: 🗑️ 清理旧的工作流运行记录
+      uses: Mattraks/delete-workflow-runs@main
+      with:
+        retain_days: 0
+        keep_minimum_runs: 2

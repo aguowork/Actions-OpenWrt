@@ -17,6 +17,10 @@ A template for building OpenWrt with GitHub Actions
 - Click the `Run workflow` button.
 - When the build is complete, click the `Artifacts` button in the upper right corner of the Actions page to download the binaries.
 
+## Single Firmware Build
+
+Run `OpenWrt Single Firmware Build` from the Actions page to build one firmware. The default target is the WR30U 112M profile; edit `config/single/firmware.config` and the scripts under `diy/single/` to customize it. Put root filesystem overlays under `files/single/`. The source repository and branch are configured in `.github/workflows/OpenWrt-Single-Firmware-Build.yml`.
+
 ## Tips
 
 - It may take a long time to create a `.config` file and build the OpenWrt firmware. Thus, before create repository to build your own firmware, you may check out if others have already built it which meet your needs by simply [search `Actions-Openwrt` in GitHub](https://github.com/search?q=Actions-openwrt).
