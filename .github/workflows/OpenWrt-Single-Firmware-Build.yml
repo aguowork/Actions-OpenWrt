@@ -87,9 +87,9 @@ jobs:
     - name: 📝 加载固件配置
       run: |
         cd openwrt
-        cp -f defconfig/mt7981-ax3000.config .config
-        # The repository defconfig enables many MT7981 devices; keep only the requested profile.
-        sed -i -E 's/^(CONFIG_TARGET_DEVICE_mediatek_mt7981_DEVICE_.*)=y$/# \1 is not set/' .config
+        cp -f defconfig/mt7986-ax6000.config .config
+        # The repository defconfig enables multiple MT7986 devices; keep only the requested profile.
+        sed -i -E 's/^(CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_.*)=y$/# \1 is not set/' .config
         cat "$GITHUB_WORKSPACE/$CONFIG_FILE" >> .config
 
     - name: 🔧 执行 diy-part2.sh
