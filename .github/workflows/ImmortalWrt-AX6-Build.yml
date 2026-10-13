@@ -1,0 +1,207 @@
+name: ImmortalWrt AX6 固件编译
+
+on:
+  repository_dispatch:
+  workflow_dispatch:
+
+env:
+  REPO_URL: https://github.com/VIKINGYFY/immortalwrt.git
+  REPO_BRANCH: main
+  CONFIG_FILE: config/ipq807x/ax6.config
+  DIY_DIR: diy/ipq807x/ax6
+  FILES_DIR: files/ipq807x/ax6
+  TZ: Asia/Shanghai
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 记录工作流开始时间
+        id: workflow_time
+        run: |
+          echo "start_time=$(date '+%Y-%m-%d %H:%M:%S')" >> "$GITHUB_OUTPUT"
+          echo "system_info=$(lsb_release -ds | tr -d '"')" >> "$GITHUB_OUTPUT"
+
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 初始化编译环境
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo apt-get -qq update
+          sudo apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gettext-base gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+          sudo apt-get -qq autoremove --purge
+          sudo apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ"
+          sudo mkdir -p /workdir
+          sudo chown "$USER:$GROUPS" /workdir
+
+      - name: 克隆 ImmortalWrt 源码
+        working-directory: /workdir
+        run: |
+          git clone --depth=1 "$REPO_URL" -b "$REPO_BRANCH" openwrt
+          ln -s /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+
+      - name: 加载自定义 feeds（DIY Part 1）
+        run: |
+          chmod +x "$DIY_DIR/part1.sh"
+          cd openwrt
+          "$GITHUB_WORKSPACE/$DIY_DIR/part1.sh"
+
+      - name: 更新 feeds 源
+        working-directory: openwrt
+        run: ./scripts/feeds update -a
+
+      - name: 安装 feeds 软件包
+        working-directory: openwrt
+        run: ./scripts/feeds install -a
+
+      - name: 复制自定义文件
+        run: |
+          cd openwrt
+          if [ -d "$GITHUB_WORKSPACE/$FILES_DIR" ]; then
+            mkdir -p files
+            rsync -a --exclude='.gitkeep' "$GITHUB_WORKSPACE/$FILES_DIR"/ files/
+          fi
+
+      - name: 加载自定义配置
+        run: |
+          cd openwrt
+          test -f "$GITHUB_WORKSPACE/$CONFIG_FILE"
+          : > .config
+          cat "$GITHUB_WORKSPACE/$CONFIG_FILE" >> .config
+
+      - name: 运行自定义编译脚本（DIY Part 2）
+        run: |
+          chmod +x "$DIY_DIR/part2.sh"
+          cd openwrt
+          "$GITHUB_WORKSPACE/$DIY_DIR/part2.sh"
+
+      - name: 下载编译依赖
+        working-directory: openwrt
+        run: |
+          make defconfig
+          DEVICE_CONFIGS=$(grep -E '^CONFIG_TARGET_qualcommax_ipq807x_DEVICE_.*=y$' .config || true)
+          if [ "$DEVICE_CONFIGS" != 'CONFIG_TARGET_qualcommax_ipq807x_DEVICE_redmi_ax6-stock=y' ]; then
+            echo "AX6 设备配置不符合预期：" >&2
+            printf '%s\n' "$DEVICE_CONFIGS" >&2
+            exit 1
+          fi
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
+
+      - name: 编译固件
+        id: compile
+        working-directory: openwrt
+        run: |
+          make -j"$(nproc)" || make -j1 || make -j1 V=s
+          echo "status=success" >> "$GITHUB_OUTPUT"
+          echo "BUILD_DATE=$(date +'%Y%m%d%H%M')" >> "$GITHUB_ENV"
+
+      - name: 整理固件产物
+        id: organize
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          FIRMWARE_DIR="$GITHUB_WORKSPACE/openwrt/bin/targets/qualcommax/ipq807x"
+          test -d "$FIRMWARE_DIR"
+          rm -rf "$FIRMWARE_DIR/packages"
+          echo "FIRMWARE_DIR=$FIRMWARE_DIR" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$(date +'%Y.%m.%d-%H%M')-AX6-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "status=success" >> "$GITHUB_OUTPUT"
+
+      - name: 上传固件到 Artifacts
+        if: steps.organize.outputs.status == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImmortalWrt_AX6_${{ env.BUILD_DATE }}
+          path: ${{ env.FIRMWARE_DIR }}
+
+      - name: 发布 GitHub Release
+        id: release
+        if: steps.organize.outputs.status == 'success'
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ env.RELEASE_TAG }}
+          name: ImmortalWrt AX6 ${{ env.BUILD_DATE }}
+          artifacts: "${{ env.FIRMWARE_DIR }}/*"
+          artifactErrorsFailBuild: true
+          allowUpdates: false
+
+      - name: 推送编译结果
+        if: always()
+        env:
+          WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
+          WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
+          START_TIME: ${{ steps.workflow_time.outputs.start_time }}
+          SYSTEM_INFO: ${{ steps.workflow_time.outputs.system_info }}
+          COMPILE_STATUS: ${{ steps.compile.outputs.status }}
+          ORGANIZE_STATUS: ${{ steps.organize.outputs.status }}
+          RELEASE_STATUS: ${{ steps.release.outcome }}
+        run: |
+          if [ -z "$WXPUSHER_TOKEN" ] || [ -z "$WXPUSHER_UIDS" ]; then
+            echo "未配置 WXPUSHER_TOKEN 或 WXPUSHER_UIDS，跳过推送"
+            exit 0
+          fi
+
+          END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+          START_EPOCH=$(date -d "$START_TIME" +%s)
+          END_EPOCH=$(date -d "$END_TIME" +%s)
+          DURATION=$((END_EPOCH - START_EPOCH))
+          HOURS=$((DURATION / 3600))
+          MINUTES=$(((DURATION % 3600) / 60))
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          if [ "$COMPILE_STATUS" = "success" ] && [ "$ORGANIZE_STATUS" = "success" ]; then
+            BUILD_STATUS="✅ 编译成功"
+            if [ "$RELEASE_STATUS" = "success" ]; then
+              FIRMWARE_LINE="<li>固件下载：<a href='${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}'>打开 GitHub Release</a></li>"
+            else
+              FIRMWARE_LINE="<li>固件产物：<a href='${RUN_URL}'>在 Actions 运行记录中下载</a></li>"
+            fi
+          else
+            BUILD_STATUS="❌ 编译失败"
+            FIRMWARE_LINE="<li>运行日志：<a href='${RUN_URL}'>查看 Actions 运行记录</a></li>"
+          fi
+
+          NOTIFICATION=$(cat <<EOF
+          <h2>ImmortalWrt AX6 固件编译通知</h2>
+          <ul>
+            <li>编译状态：${BUILD_STATUS}</li>
+            <li>源码分支：${REPO_BRANCH}</li>
+            <li>源码仓库：$(basename "$REPO_URL" .git)</li>
+            <li>运行环境：${SYSTEM_INFO}</li>
+            <li>开始时间：${START_TIME}</li>
+            <li>结束时间：${END_TIME}</li>
+            <li>总耗时：${HOURS}小时${MINUTES}分钟</li>
+            ${FIRMWARE_LINE}
+          </ul>
+          EOF
+          )
+
+          JSON_DATA=$(jq -n \
+            --arg appToken "$WXPUSHER_TOKEN" \
+            --arg content "$NOTIFICATION" \
+            --arg uid "$WXPUSHER_UIDS" \
+            '{appToken:$appToken, content:$content, summary:"ImmortalWrt AX6 编译通知", contentType:2, uids:[$uid]}')
+
+          if PUSH_RESPONSE=$(curl -fsS --connect-timeout 10 --max-time 20 \
+              -X POST -H "Content-Type: application/json" \
+              -d "$JSON_DATA" \
+              https://wxpusher.zjiecode.com/api/send/message); then
+            if echo "$PUSH_RESPONSE" | jq -e '.code == 1000 and .success == true' >/dev/null; then
+              echo "编译结果推送成功"
+            else
+              PUSH_MESSAGE=$(echo "$PUSH_RESPONSE" | jq -r '.msg // "未知错误"' 2>/dev/null || true)
+              echo "::warning::推送失败：${PUSH_MESSAGE}"
+            fi
+          else
+            echo "::warning::WxPusher 接口连接失败，不影响工作流结果"
+          fi
