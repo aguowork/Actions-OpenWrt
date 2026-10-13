@@ -29,11 +29,10 @@ echo "正在替换 luci-app-wechatpush 为最新版本..."
 rm -rf feeds/luci/applications/luci-app-wechatpush
 git clone --depth=1 https://github.com/aguowork/luci-app-wechatpush.git feeds/luci/applications/luci-app-wechatpush
 
-# ImmortalWrt 21.02 将 Lua 运行环境包含在现有 LuCI 软件包中，
-# 没有新版 LuCI 单独提供的 luci-lua-runtime 软件包。
-# 下面的 sed 命令会从 wechatpush 的 Makefile 依赖列表中删除 +luci-lua-runtime，
-# 避免 opkg 在 21.02 源码树中查找不存在的软件包。
-# sed -i 's/[[:space:]]*+luci-lua-runtime//' feeds/luci/applications/luci-app-wechatpush/Makefile
+# ImmortalWrt 21.02 的 Lua LuCI 运行库由 luci-base 提供，
+# 没有新版 LuCI 单独拆出的 luci-lua-runtime 软件包。
+# 将 wechatpush 的依赖映射到 21.02 对应的 luci-base，避免丢掉运行库依赖。
+sed -i 's/+luci-lua-runtime/+luci-base/' feeds/luci/applications/luci-app-wechatpush/Makefile
 
 # firmware.config 启用了流量监控；21.02 feeds 中没有 wrtbwmon，
 # 因此将它的源码加入当前构建树。
