@@ -178,7 +178,7 @@ jobs:
         # 根据设备型号选择对应的 defconfig 基础配置
         case "${{ matrix.device }}" in
           AX6000)
-            cp -f defconfig/mt7986-ax6000.config .config
+            cp -f defconfig/mt7986-ax6000_dae.config .config
             ;;
           WR30U)
             cp -f defconfig/mt7981-ax3000.config .config
