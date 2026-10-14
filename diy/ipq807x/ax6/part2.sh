@@ -32,3 +32,9 @@ fi
 echo "正在替换 luci-app-wechatpush 为 aguowork 版本..."
 rm -rf feeds/luci/applications/luci-app-wechatpush
 git clone --depth=1 https://github.com/aguowork/luci-app-wechatpush.git feeds/luci/applications/luci-app-wechatpush
+
+# 流量监控配置会自动选择 wrtbwmon；这里补充对应的软件包源码。
+echo "正在添加 wechatpush 流量监控依赖 wrtbwmon..."
+git clone --depth=1 https://github.com/brvphoenix/wrtbwmon.git package/wrtbwmon-source
+mv package/wrtbwmon-source/wrtbwmon package/wrtbwmon
+rm -rf package/wrtbwmon-source
