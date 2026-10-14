@@ -23,7 +23,7 @@ env:
   REPO_URL: https://github.com/hanwckf/immortalwrt-mt798x.git
   REPO_BRANCH: openwrt-21.02
   VERSION: "21.02"
-  BASE_CONFIG: defconfig/mt7986-ax6000.config
+  BASE_CONFIG: defconfig/mt7981-ax3000.config
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
