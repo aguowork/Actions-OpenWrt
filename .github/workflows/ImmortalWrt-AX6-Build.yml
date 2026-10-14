@@ -9,7 +9,7 @@ env:
   REPO_BRANCH: main
   CONFIG_FILE: config/ipq807x/ax6.config
   DIY_DIR: diy/ipq807x/ax6
-  FILES_DIR: files/ipq807x/ax6
+  CUSTOM_FILES_DIR: files/ipq807x/ax6
   TZ: Asia/Shanghai
 
 permissions:
@@ -65,9 +65,9 @@ jobs:
       - name: 复制自定义文件
         run: |
           cd openwrt
-          if [ -d "$GITHUB_WORKSPACE/$FILES_DIR" ]; then
+          if [ -d "$GITHUB_WORKSPACE/$CUSTOM_FILES_DIR" ]; then
             mkdir -p files
-            rsync -a --exclude='.gitkeep' "$GITHUB_WORKSPACE/$FILES_DIR"/ files/
+            rsync -a --exclude='.gitkeep' "$GITHUB_WORKSPACE/$CUSTOM_FILES_DIR"/ files/
           fi
 
       - name: 加载自定义配置
