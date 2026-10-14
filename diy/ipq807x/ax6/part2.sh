@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Kernel preparation copies this device overlay path unconditionally.
-mkdir -p target/linux/qualcommax/files/ipq807x/ax6
-
 # 修改默认管理地址和主机名。
 sed -i 's/192.168.1.1/192.168.31.1/g' package/base-files/files/bin/config_generate
 sed -i "s/hostname='ImmortalWrt'/hostname='Redmi-AX6'/g" package/base-files/files/bin/config_generate
