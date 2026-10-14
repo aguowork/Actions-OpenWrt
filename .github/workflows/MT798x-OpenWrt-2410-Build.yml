@@ -19,17 +19,6 @@ name: MT798x OpenWrt (237-ImmortalWrt-24.10)
 on:
   repository_dispatch:  # 允许通过 API 触发工作流程
   workflow_dispatch:    # 允许手动触发工作流程
-    inputs:
-      device_selection:
-        description: '选择要编译的设备'
-        required: true
-        type: choice
-        options:
-          - 全部
-          - AX6000
-          - WR30U
-          - 360T7
-        default: '全部'
 
 # 环境变量设置
 env:
@@ -46,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: ${{ github.event.inputs.device_selection == '全部' && fromJson('["AX6000", "WR30U", "360T7"]') || fromJson(format('[ "{0}" ]', github.event.inputs.device_selection)) }}
+        device: [AX6000]
 
     steps:
     - name: 📝 记录工作流开始时间
@@ -175,18 +164,8 @@ jobs:
         fi
 
         cd openwrt
-        # 根据设备型号选择对应的 defconfig 基础配置
-        case "${{ matrix.device }}" in
-          AX6000)
-            cp -f defconfig/mt7986-ax6000_dae.config .config
-            ;;
-          WR30U)
-            cp -f defconfig/mt7981-ax3000.config .config
-            ;;
-          360T7)
-            cp -f defconfig/mt7981-ax3000.config .config
-            ;;
-        esac
+        # 加载 AX6000 的 defconfig 基础配置
+        cp -f defconfig/mt7986-ax6000_dae.config .config
         # 追加用户自定义插件配置
         if [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ]; then
           cat $GITHUB_WORKSPACE/$CONFIG_FILE >> .config

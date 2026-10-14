@@ -19,7 +19,7 @@ A template for building OpenWrt with GitHub Actions
 
 ## Single Firmware Build
 
-Run `OpenWrt Single Firmware Build` from the Actions page to build one firmware. The default target is the WR30U 112M profile; edit `config/single/firmware.config` and the scripts under `diy/single/` to customize it. Put root filesystem overlays under `files/single/`. The source repository and branch are configured in `.github/workflows/OpenWrt-Single-Firmware-Build.yml`.
+Run `OpenWrt Single Firmware Build` from the Actions page to build one firmware. The default target is the AX6000 profile; edit `config/single/firmware.config` and the scripts under `diy/single/` to customize it. Put root filesystem overlays under `files/single/`. The source repository and branch are configured in `.github/workflows/OpenWrt-Single-Firmware-Build.yml`.
 
 ## Tips
 
