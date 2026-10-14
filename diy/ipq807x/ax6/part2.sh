@@ -38,3 +38,11 @@ echo "正在添加 wechatpush 流量监控依赖 wrtbwmon..."
 git clone --depth=1 https://github.com/brvphoenix/wrtbwmon.git package/wrtbwmon-source
 mv package/wrtbwmon-source/wrtbwmon package/wrtbwmon
 rm -rf package/wrtbwmon-source
+
+# 应用与 wrt_release 一致的 miniupnpd 租期补丁。
+MINIUPNPD_PACKAGE_DIR="feeds/packages/net/miniupnpd"
+MINIUPNPD_PATCH="$GITHUB_WORKSPACE/$DIY_DIR/patches/miniupnpd/999-chanage-default-leaseduration.patch"
+test -d "$MINIUPNPD_PACKAGE_DIR"
+test -f "$MINIUPNPD_PATCH"
+mkdir -p "$MINIUPNPD_PACKAGE_DIR/patches"
+cp "$MINIUPNPD_PATCH" "$MINIUPNPD_PACKAGE_DIR/patches/"
