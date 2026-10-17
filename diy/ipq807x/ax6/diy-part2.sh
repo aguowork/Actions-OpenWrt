@@ -28,21 +28,6 @@ git clone --depth=1 https://github.com/brvphoenix/wrtbwmon.git package/wrtbwmon-
 mv package/wrtbwmon-source/wrtbwmon package/wrtbwmon
 rm -rf package/wrtbwmon-source
 
-# 应用与 wrt_release 一致的 miniupnpd 租期补丁。
-MINIUPNPD_PACKAGE_DIR="feeds/packages/net/miniupnpd"
-MINIUPNPD_PATCH="$GITHUB_WORKSPACE/$DIY_DIR/patches/miniupnpd/999-chanage-default-leaseduration.patch"
-test -d "$MINIUPNPD_PACKAGE_DIR"
-test -f "$MINIUPNPD_PATCH"
-
-# miniupnpd 2.3.11 already includes this parser rewrite; the feed backport
-# conflicts with the newer source and must not be applied to that release.
-if grep -qx 'PKG_VERSION:=2.3.11' "$MINIUPNPD_PACKAGE_DIR/Makefile"; then
-  rm -f "$MINIUPNPD_PACKAGE_DIR/patches/020-descr-filter-fix.patch"
-fi
-
-mkdir -p "$MINIUPNPD_PACKAGE_DIR/patches"
-cp "$MINIUPNPD_PATCH" "$MINIUPNPD_PACKAGE_DIR/patches/"
-
 echo "第三方包处理完成！"
 
 echo "开始修改系统配置..."
