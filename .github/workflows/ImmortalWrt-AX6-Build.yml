@@ -50,9 +50,9 @@ jobs:
 
       - name: 加载自定义 feeds（DIY Part 1）
         run: |
-          chmod +x "$DIY_DIR/part1.sh"
+          chmod +x "$DIY_DIR/diy-part1.sh"
           cd openwrt
-          "$GITHUB_WORKSPACE/$DIY_DIR/part1.sh"
+          "$GITHUB_WORKSPACE/$DIY_DIR/diy-part1.sh"
 
       - name: 更新 feeds 源
         working-directory: openwrt
@@ -63,11 +63,72 @@ jobs:
         run: ./scripts/feeds install -a
 
       - name: 复制自定义文件
+        env:
+          WXPUSHER_TOKEN: ${{ secrets.WXPUSHER_TOKEN }}
+          WXPUSHER_UIDS: ${{ secrets.WXPUSHER_UIDS }}
+          WECHATPUSH_SC3KEY: ${{ secrets.WECHATPUSH_SC3KEY }}
+          WECHATPUSH_SC3UID: ${{ secrets.WECHATPUSH_SC3UID }}
         run: |
+          : "${WXPUSHER_TOKEN:?Missing GitHub Secret WXPUSHER_TOKEN}"
+          : "${WXPUSHER_UIDS:?Missing GitHub Secret WXPUSHER_UIDS}"
+          : "${WECHATPUSH_SC3KEY:?Missing GitHub Secret WECHATPUSH_SC3KEY}"
+          : "${WECHATPUSH_SC3UID:?Missing GitHub Secret WECHATPUSH_SC3UID}"
+
+          if [[ ! "${WXPUSHER_TOKEN}" =~ ^AT_[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::GitHub Secret WXPUSHER_TOKEN 格式无效"
+            exit 1
+          fi
+          if [[ ! "${WXPUSHER_UIDS}" =~ ^UID_[A-Za-z0-9_-]+$ ]]; then
+            echo "::error::GitHub Secret WXPUSHER_UIDS 必须是单个 WxPusher UID"
+            exit 1
+          fi
+
           cd openwrt
           if [ -d "$GITHUB_WORKSPACE/$CUSTOM_FILES_DIR" ]; then
             mkdir -p files
             rsync -a --exclude='.gitkeep' "$GITHUB_WORKSPACE/$CUSTOM_FILES_DIR"/ files/
+          else
+            echo "::error::找不到自定义文件目录 $CUSTOM_FILES_DIR"
+            exit 1
+          fi
+
+          WXPUSHER_CONFIG_FILES=(
+            "files/etc/JiaoBen/wxpusher.conf"
+            "files/etc/wx/wx_settings.conf"
+          )
+          for WXPUSHER_CONFIG_FILE in "${WXPUSHER_CONFIG_FILES[@]}"; do
+            if [ ! -f "${WXPUSHER_CONFIG_FILE}" ]; then
+              echo "::error::找不到 ${WXPUSHER_CONFIG_FILE}"
+              exit 1
+            fi
+            sed -i \
+              -e 's/^WXPUSHER_ENABLED=.*/WXPUSHER_ENABLED=1/' \
+              -e "s|^WX_APP_TOKEN=.*|WX_APP_TOKEN='${WXPUSHER_TOKEN}'|" \
+              -e "s|^WX_MY_UID=.*|WX_MY_UID='${WXPUSHER_UIDS}'|" \
+              "${WXPUSHER_CONFIG_FILE}"
+            chmod 600 "${WXPUSHER_CONFIG_FILE}"
+            if ! (
+              . "${WXPUSHER_CONFIG_FILE}"
+              [ "${WXPUSHER_ENABLED}" = "1" ] &&
+                [ "${WX_APP_TOKEN}" = "${WXPUSHER_TOKEN}" ] &&
+                [ "${WX_MY_UID}" = "${WXPUSHER_UIDS}" ]
+            ); then
+              echo "::error::WxPusher 配置写入失败：${WXPUSHER_CONFIG_FILE}"
+              exit 1
+            fi
+          done
+
+          WECHAT_CONFIG="files/etc/config/wechatpush"
+          if [ -f "$WECHAT_CONFIG" ]; then
+            sed -i \
+              -e "s|^\toption sc3key .*|\toption sc3key '${WECHATPUSH_SC3KEY}'|" \
+              -e "s|^\toption sc3uid .*|\toption sc3uid '${WECHATPUSH_SC3UID}'|" \
+              "$WECHAT_CONFIG"
+            chmod 600 "$WECHAT_CONFIG"
+            echo "wechatpush sc3key/sc3uid 已写入"
+          else
+            echo "::error::找不到 ${WECHAT_CONFIG}"
+            exit 1
           fi
 
       - name: 加载自定义配置
@@ -78,10 +139,12 @@ jobs:
           cat "$GITHUB_WORKSPACE/$CONFIG_FILE" >> .config
 
       - name: 运行自定义编译脚本（DIY Part 2）
+        env:
+          DDNSTO_TOKEN: ${{ secrets.DDNSTO_TOKEN }}
         run: |
-          chmod +x "$DIY_DIR/part2.sh"
+          chmod +x "$DIY_DIR/diy-part2.sh"
           cd openwrt
-          "$GITHUB_WORKSPACE/$DIY_DIR/part2.sh"
+          "$GITHUB_WORKSPACE/$DIY_DIR/diy-part2.sh"
 
       - name: 下载编译依赖
         working-directory: openwrt

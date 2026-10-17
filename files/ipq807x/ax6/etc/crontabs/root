@@ -1,0 +1,3 @@
+#zjwifi*/11 * * * * /usr/libexec/rpcd/wx-wireless call auto_switch '{}'
+#* * * * * if [ ! -x /etc/JiaoBen/llts.sh ]; then chmod +x /etc/JiaoBen/llts.sh; fi && /bin/bash /etc/JiaoBen/llts.sh # 每1分钟执行一次 流量异常提醒
+#cz*/10 * * * * /sbin/firstboot -y && /sbin/reboot

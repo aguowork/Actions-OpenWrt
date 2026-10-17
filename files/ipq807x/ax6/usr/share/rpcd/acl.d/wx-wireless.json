@@ -1,0 +1,30 @@
+{
+    "wx-wireless": {
+        "description": "Wireless Relay Manager",
+        "read": {
+            "ubus": {
+                "wx-wireless": [
+                    "get_status",
+                    "get_wireless_settings",
+                    "get_known_networks",
+                    "get_log",
+                    "get_retry_status"
+                ]
+            }
+        },
+        "write": {
+            "ubus": {
+                "wx-wireless": [
+                    "save_wireless_settings",
+                    "connect",
+                    "save_network",
+                    "delete_networks",
+                    "save_order",
+                    "auto_switch",
+                    "clear_log",
+                    "reset_retry_count"
+                ]
+            }
+        }
+    }
+}
