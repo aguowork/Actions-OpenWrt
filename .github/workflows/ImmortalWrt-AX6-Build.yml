@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/VIKINGYFY/immortalwrt.git
-  REPO_BRANCH: main
+  REPO_URL: https://github.com/LiBwrt/openwrt-6.x.git
+  REPO_BRANCH: 25.12-nss
   CONFIG_FILE: config/ipq807x/ax6.config
   DIY_DIR: diy/ipq807x/ax6
   CUSTOM_FILES_DIR: files/ipq807x/ax6
