@@ -71,7 +71,7 @@ sed -i "s/#qdts~//g" files/etc/rc.local
 sed -i 's/#zjwifi\*\/[^ ]* \*/\*\/56 \*/' files/etc/crontabs/root
 
 # 配置与 AX6000 相同的无线中继候选网络。
-echo '{"wifi":[{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"Tenda_1F5600","encryption":"psk2","password":"qwer15207556371asdf","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"b1403","encryption":"psk2","password":"13539012490","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/etc/wx/wifi-config.json
+echo '{"wifi":[{"name":"b1403","encryption":"psk2","password":"13539012490","band":"5G","last_updated":"2024-11-14 18:33:40"},{"name":"Tenda_1F5600","encryption":"psk2","password":"qwer15207556371asdf","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"蕊","encryption":"psk2","password":"zyp170816","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"Qiang","encryption":"psk2","password":"Qiang8331518","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"1309","encryption":"psk2","password":"13409941080","band":"2G","last_updated":"2024-11-14 18:33:40"},{"name":"TP-LINK_FCF3","encryption":"psk2","password":"17687610787","band":"2G","last_updated":"2024-11-14 18:33:40"}],"autowifiranking":[{"CQ_TIMES":0}]}' > files/etc/wx/wifi-config.json
 sed -i 's/RETRY_INTERVAL=130/RETRY_INTERVAL=130/g' files/etc/JiaoBen/qdts.sh
 
 echo "脚本和定时任务配置完成！"

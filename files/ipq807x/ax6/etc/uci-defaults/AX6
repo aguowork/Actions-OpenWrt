@@ -28,14 +28,14 @@ uci set wireless.radio1.cell_density='0'
 uci set wireless.default_radio1.ssid='H2G'
 uci set wireless.default_radio1.key='88888888..'
 uci set wireless.wifinet2=wifi-iface
-uci set wireless.wifinet2.device='radio1'
+uci set wireless.wifinet2.device='radio0'
 uci set wireless.wifinet2.mode='sta'
 uci set wireless.wifinet2.network='wwan'
-uci set wireless.wifinet2.ssid='1309'
+uci set wireless.wifinet2.ssid='b1403'
 uci set wireless.wifinet2.encryption='sae'
-uci set wireless.wifinet2.key='13409941080'
-uci set wireless.radio1.htmode='HT40'
-uci set wireless.radio1.channel='13'
+uci set wireless.wifinet2.key='13539012490'
+uci set wireless.radio0.htmode='HT80'
+uci set wireless.radio0.channel='36'
 uci commit wireless
 
 # 设置设备显示名称。
